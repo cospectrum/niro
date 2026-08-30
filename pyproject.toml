@@ -23,3 +23,8 @@ dev = [
     "ruff>=0.16.5",
     "ty>=0.0.75",
 ]
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.14"
