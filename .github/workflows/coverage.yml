@@ -1,0 +1,43 @@
+name: Coverage
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coverage-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31.10.6
+
+      - name: Sync dependencies
+        run: nix develop --no-update-lock-file -c uv sync --locked
+
+      - name: Run tests and collect coverage data
+        run: nix develop --no-update-lock-file -c uv run --no-sync coverage run --branch --source=niro -m pytest
+
+      - name: Convert coverage data to Cobertura XML
+        run: nix develop --no-update-lock-file -c uv run --no-sync coverage xml
+
+      - name: Upload coverage to Coveralls
+        uses: coverallsapp/github-action@8d6379e14d29928660c4ba802d8e85393440b329 # v2.3.8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: coverage.xml
+          format: cobertura
+          coverage-reporter-version: v0.6.22
