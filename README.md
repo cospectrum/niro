@@ -13,22 +13,21 @@ PyTorch, and other frontends through one unified SSA IR. The initial target is
 MLIR, primarily using xDSL. Future backends may include WebAssembly, GIMPLE, and
 others.
 
-## Design principles
-
-We want the project to remain small, direct, and easy to understand without
-compromising correctness or output quality. Prefer simple designs that model
-the required semantics precisely over speculative abstractions.
-
-- Use type hints throughout Python code.
-- Keep the core IR independent of any single frontend or backend.
-- Add tests for meaningful behavior and invariants.
-- Keep documentation concise, and try to introduce concepts before relying on them.
-- Write code and prose with care for the people who will read them next.
-
 ## Development
 
 The custom SSA intermediate representation is documented in the
 [Niro IR specification](docs/ir.md).
+
+We want the project to remain small, direct, and easy to understand without
+compromising correctness or output quality. When contributing:
+
+- Prefer simple designs that model the required semantics precisely over
+  speculative abstractions.
+- Use type hints throughout Python code.
+- Keep the core IR independent of any single frontend or backend.
+- Add tests for meaningful behavior and invariants.
+- Keep documentation concise, and introduce concepts before relying on them.
+- Write code and prose with care for the people who will read them next.
 
 Run the local CI checks with:
 

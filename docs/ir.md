@@ -166,12 +166,16 @@ True
 42
 2.0
 b"raw data"
-(1.0, 2.0, 3.0)
 ```
 
-Niro literals may be booleans, integers, floating-point numbers, bytes, or
-aggregates of literals. A literal does not specify an IR type by itself. The
-operation that introduces it also provides the typed result.
+Niro literals may be booleans, integers, floating-point numbers, or bytes. A
+literal does not specify an IR type by itself. The operation that introduces
+it also provides the typed result.
+
+Tensor constants are stored as contiguous, row-major bytes in little-endian
+element order. Their element type and shape come from the result's
+`TensorType`. They are not expanded into aggregate literals, since doing so
+would add substantial object and pointer overhead for model weights.
 
 ### `Attribute`
 

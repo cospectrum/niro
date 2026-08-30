@@ -46,7 +46,7 @@ class Value:
 
 
 type Attribute = None | bool | int | float | str | bytes | tuple[Attribute, ...]
-type Literal = bool | int | float | bytes | tuple[Literal, ...]
+type Literal = bool | int | float | bytes
 
 
 @dataclass(frozen=True, slots=True)

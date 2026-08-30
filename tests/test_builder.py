@@ -1,3 +1,5 @@
+from typing import cast
+
 import pytest
 
 from niro import ir
@@ -54,3 +56,25 @@ def test_rejects_operation_after_return() -> None:
 
     with pytest.raises(ValueError, match="after return"):
         function.f32(1.0)
+
+
+def test_tensor_constant_requires_bytes() -> None:
+    function = ModuleBuilder().func("main")
+    tensor_type = ir.TensorType(element_type=ir.ScalarType.F32, shape=(2,))
+
+    value = function.tensor(
+        data=b"\x00\x00\x00@\x00\x00@@",
+        result_type=tensor_type,
+    )
+
+    assert value.type == tensor_type
+    assert function.function.body is not None
+    assert function.function.body.blocks[0].operations == [
+        ir.Const(result=value, value=b"\x00\x00\x00@\x00\x00@@")
+    ]
+
+    with pytest.raises(TypeError, match="tensor data must be bytes"):
+        function.tensor(
+            data=cast(bytes, (2.0, 3.0)),
+            result_type=tensor_type,
+        )

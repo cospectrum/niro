@@ -137,6 +137,12 @@ class FunctionBuilder:
     def f64(self, value: float) -> ir.Value:
         return self.constant(value, ir.ScalarType.F64)
 
+    def tensor(self, data: bytes, result_type: ir.TensorType) -> ir.Value:
+        """Create a tensor constant from contiguous little-endian data."""
+        if not isinstance(data, bytes):
+            raise TypeError("tensor data must be bytes")
+        return self.constant(data, result_type)
+
     def add(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
         self._require_same_type("add", lhs, rhs)
         result = self._new_value(lhs.type)
