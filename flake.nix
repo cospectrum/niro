@@ -44,5 +44,52 @@
           };
         }
       );
+
+      apps = forAllSystems (
+        system:
+        let
+          pkgs = pkgsFor system;
+          ci = pkgs.writeShellApplication {
+            name = "niro-ci";
+            runtimeInputs = with pkgs; [
+              actionlint
+              uv
+              zizmor
+            ];
+            text = ''
+              echo ":: Sync dependencies"
+              uv sync --locked
+
+              echo ":: Test with branch coverage"
+              uv run --no-sync coverage run --branch --source=niro -m pytest
+
+              echo ":: Report coverage"
+              uv run --no-sync coverage report
+
+              echo ":: Type check"
+              uv run --no-sync ty check
+
+              echo ":: Format check"
+              uv run --no-sync ruff format --check
+
+              echo ":: Lint"
+              uv run --no-sync ruff check
+
+              echo ":: Check GitHub Actions workflows"
+              actionlint
+
+              echo ":: Audit GitHub Actions workflows"
+              zizmor --offline --persona=regular --collect=workflows .
+            '';
+          };
+        in
+        {
+          ci = {
+            type = "app";
+            program = "${ci}/bin/niro-ci";
+            meta.description = "Run niro's local CI checks";
+          };
+        }
+      );
     };
 }
