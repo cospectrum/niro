@@ -23,6 +23,7 @@
         };
     in
     {
+      # Expose standalone tools, e.g. `nix run .#actionlint`.
       packages = forAllSystems (
         system:
         let
