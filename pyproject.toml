@@ -7,10 +7,10 @@ authors = [
     { name = "Alex Severin", email = "severinalexeyv@gmail.com" }
 ]
 requires-python = ">=3.14"
-dependencies = []
+dependencies = ["typer>=0.27.2"]
 
 [project.scripts]
-niro = "niro.cli:main"
+niro = "niro.cli:app"
 
 [build-system]
 requires = ["uv_build>=0.12.2,<0.13.0"]
