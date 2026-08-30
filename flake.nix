@@ -16,15 +16,17 @@
       overlays = [ ];
 
       forAllSystems = nixpkgs.lib.genAttrs systems;
+      pkgsFor = system:
+        import nixpkgs {
+          inherit system overlays;
+          config.allowUnfree = false;
+        };
     in
     {
       packages = forAllSystems (
         system:
         let
-          pkgs = import nixpkgs {
-            inherit system overlays;
-            config.allowUnfree = false;
-          };
+          pkgs = pkgsFor system;
         in
         {
           inherit (pkgs) actionlint zizmor;
@@ -34,10 +36,7 @@
       devShells = forAllSystems (
         system:
         let
-          pkgs = import nixpkgs {
-            inherit system overlays;
-            config.allowUnfree = false;
-          };
+          pkgs = pkgsFor system;
         in
         {
           default = pkgs.mkShellNoCC {
