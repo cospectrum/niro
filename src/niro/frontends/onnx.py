@@ -133,11 +133,7 @@ def _import_node(
             raw_permutation = (
                 onnx.helper.get_attribute_value(attributes["perm"])
                 if "perm" in attributes
-                else range(
-                    _require_known_rank(operands[0]) - 1,
-                    -1,
-                    -1,
-                )
+                else reversed(range(_require_known_rank(operands[0])))
             )
             permutation = tuple(int(index) for index in raw_permutation)
             _record_output(
