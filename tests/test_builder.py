@@ -78,3 +78,29 @@ def test_tensor_constant_requires_bytes() -> None:
             data=cast(bytes, (2.0, 3.0)),
             result_type=tensor_type,
         )
+
+
+def test_builds_unknown_operation() -> None:
+    tensor_type = ir.TensorType(element_type=ir.ScalarType.F32, shape=(2,))
+    function = ModuleBuilder().func(
+        name="main",
+        arg_types=[tensor_type],
+        ret_types=[tensor_type],
+    )
+
+    (result,) = function.unknown(
+        name="onnx.Relu",
+        operands=function.args,
+        result_types=[tensor_type],
+        attributes={"alpha": 1.0},
+    )
+    function.return_(result)
+
+    assert function.function.body is not None
+    operation = function.function.body.blocks[0].operations[0]
+    assert operation == ir.UnknownOp(
+        name="onnx.Relu",
+        operands=function.args,
+        results=(result,),
+        attributes={"alpha": 1.0},
+    )

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import builtins
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Final
 
 from niro import ir
@@ -195,6 +195,29 @@ class FunctionBuilder:
             operands=(operand,),
         )
         return result
+
+    def unknown(
+        self,
+        name: str,
+        operands: Sequence[ir.Value] = (),
+        result_types: Sequence[ir.Type] = (),
+        attributes: Mapping[str, ir.Attribute] | None = None,
+    ) -> tuple[ir.Value, ...]:
+        """Create an operation whose semantics are not known to Niro."""
+        if not name:
+            raise ValueError("unknown operation name cannot be empty")
+        normalized_operands = tuple(operands)
+        results = tuple(self._new_value(result_type) for result_type in result_types)
+        self._append(
+            ir.UnknownOp(
+                name=name,
+                operands=normalized_operands,
+                results=results,
+                attributes=dict(attributes or {}),
+            ),
+            operands=normalized_operands,
+        )
+        return results
 
     def call(
         self,

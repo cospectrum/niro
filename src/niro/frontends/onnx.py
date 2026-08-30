@@ -64,11 +64,11 @@ class _OnnxImporter:
         function: FunctionBuilder,
         node: onnx.NodeProto,
     ) -> None:
-        if node.domain not in ("", "ai.onnx"):
-            raise NotImplementedError(
-                f"unsupported ONNX domain {node.domain!r} for {node.op_type}"
-            )
         operands = [self._lookup_imported_value(name) for name in node.input]
+        if node.domain not in ("", "ai.onnx"):
+            self._import_unknown_node(function, node, operands)
+            return
+
         match node.op_type:
             case "Add":
                 lhs, rhs = _require_two_inputs(node, operands)
@@ -98,9 +98,28 @@ class _OnnxImporter:
                     node, function.transpose(operands[0], permutation)
                 )
             case _:
-                raise NotImplementedError(
-                    f"unsupported ONNX operation: {node.op_type}"
-                )
+                self._import_unknown_node(function, node, operands)
+
+    def _import_unknown_node(
+        self,
+        function: FunctionBuilder,
+        node: onnx.NodeProto,
+        operands: list[ir.Value],
+    ) -> None:
+        if any(not name for name in node.output):
+            raise NotImplementedError(
+                f"optional outputs are not supported for {node.op_type}"
+            )
+        results = function.unknown(
+            name=_qualified_operation_name(node),
+            operands=operands,
+            result_types=[self._lookup_value_type(name) for name in node.output],
+            attributes={
+                attribute.name: _convert_attribute(attribute)
+                for attribute in node.attribute
+            },
+        )
+        self._values.update(zip(node.output, results, strict=True))
 
     def _record_single_node_output(
         self, node: onnx.NodeProto, value: ir.Value
@@ -160,6 +179,28 @@ def _decode_initializer_data(initializer: onnx.TensorProto) -> bytes:
     array = numpy_helper.to_array(initializer)
     little_endian_dtype = array.dtype.newbyteorder("<")
     return array.astype(little_endian_dtype, copy=False).tobytes(order="C")
+
+
+def _qualified_operation_name(node: onnx.NodeProto) -> str:
+    domain = "onnx" if node.domain in ("", "ai.onnx") else node.domain
+    return f"{domain}.{node.op_type}"
+
+
+def _convert_attribute(attribute: onnx.AttributeProto) -> ir.Attribute:
+    value = onnx.helper.get_attribute_value(attribute)
+    if isinstance(value, (bool, int, float, str, bytes)) or value is None:
+        return value
+    if isinstance(value, (list, tuple)):
+        return tuple(_convert_attribute_element(element) for element in value)
+    raise NotImplementedError(
+        f"unsupported ONNX attribute {attribute.name!r} on an unknown operation"
+    )
+
+
+def _convert_attribute_element(value: object) -> ir.Attribute:
+    if isinstance(value, (bool, int, float, str, bytes)) or value is None:
+        return value
+    raise NotImplementedError("unsupported value in an ONNX attribute sequence")
 
 
 def _require_two_inputs(
