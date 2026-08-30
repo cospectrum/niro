@@ -10,7 +10,7 @@
 
 The goal of Niro is to compile computation graphs from ONNX, TensorFlow,
 PyTorch, and other frontends through one unified SSA IR. The initial target is
-MLIR, primarily using xDSL. Future backends may include WebAssembly, GIMP, and
+MLIR, primarily using xDSL. Future backends may include WebAssembly, GIMPLE, and
 others.
 
 ## Design principles
