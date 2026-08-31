@@ -14,13 +14,13 @@ def test_builds_function_and_call_with_function_wide_value_ids() -> None:
         ret_types=[ir.ScalarType.F32],
     )
     lhs, rhs = add.args
-    result = add.add(lhs, rhs)
-    add.return_(result)
+    result = add.entry.add(lhs, rhs)
+    add.entry.return_(result)
 
     main = module.func("main", ret_types=[ir.ScalarType.F32])
-    call_result = main.call(add, [main.f32(1.0), main.f32(2.0)])
+    call_result = main.entry.call(add, [main.entry.f32(1.0), main.entry.f32(2.0)])
     assert isinstance(call_result, ir.Value)
-    main.return_(call_result)
+    main.entry.return_(call_result)
     module.entry_point(main)
 
     assert [value.id for value in add.args] == [ir.ValueId(0), ir.ValueId(1)]
@@ -36,8 +36,8 @@ def test_calls_external_function_by_name() -> None:
     module.extern("print_f32", [ir.ScalarType.F32])
     main = module.func("main")
 
-    assert main.call("print_f32", main.f32(1.0)) is None
-    main.return_()
+    assert main.entry.call("print_f32", main.entry.f32(1.0)) is None
+    main.entry.return_()
 
 
 def test_rejects_values_from_another_function() -> None:
@@ -46,23 +46,23 @@ def test_rejects_values_from_another_function() -> None:
     second = module.func("second", [ir.ScalarType.F32])
 
     with pytest.raises(ValueError, match="does not belong"):
-        second.add(first.args[0], second.args[0])
+        second.entry.add(first.args[0], second.args[0])
 
 
 def test_rejects_operation_after_return() -> None:
     module = ModuleBuilder()
     function = module.func("main")
-    function.return_()
+    function.entry.return_()
 
-    with pytest.raises(ValueError, match="after return"):
-        function.f32(1.0)
+    with pytest.raises(ValueError, match="after a block terminator"):
+        function.entry.f32(1.0)
 
 
 def test_tensor_constant_requires_bytes() -> None:
     function = ModuleBuilder().func("main")
     tensor_type = ir.TensorType(element_type=ir.ScalarType.F32, shape=(2,))
 
-    value = function.tensor(
+    value = function.entry.tensor(
         data=b"\x00\x00\x00@\x00\x00@@",
         result_type=tensor_type,
     )
@@ -74,7 +74,7 @@ def test_tensor_constant_requires_bytes() -> None:
     ]
 
     with pytest.raises(TypeError, match="requires packed bytes"):
-        function.tensor(
+        function.entry.tensor(
             data=cast(bytes, (2.0, 3.0)),
             result_type=tensor_type,
         )
@@ -88,13 +88,13 @@ def test_builds_unknown_operation() -> None:
         ret_types=[tensor_type],
     )
 
-    (result,) = function.unknown(
+    (result,) = function.entry.unknown(
         name="onnx.Relu",
         operands=function.args,
         result_types=[tensor_type],
         attributes={"alpha": 1.0},
     )
-    function.return_(result)
+    function.entry.return_(result)
 
     assert function.function.body is not None
     operation = function.function.body.blocks[0].operations[0]
@@ -111,9 +111,9 @@ def test_failed_operation_does_not_allocate_a_value() -> None:
     tensor_type = ir.TensorType(element_type=ir.ScalarType.F32, shape=(2,))
 
     with pytest.raises(ValueError, match="expected 8"):
-        function.tensor(data=bytes(4), result_type=tensor_type)
+        function.entry.tensor(data=bytes(4), result_type=tensor_type)
 
-    assert function.i32(1).id == ir.ValueId(0)
+    assert function.entry.i32(1).id == ir.ValueId(0)
 
 
 def test_matmul_derives_its_result_type() -> None:
@@ -125,6 +125,63 @@ def test_matmul_derives_its_result_type() -> None:
         ],
     )
 
-    result = function.matmul(function.args[0], function.args[1])
+    result = function.entry.matmul(function.args[0], function.args[1])
 
     assert result.type == ir.TensorType(ir.ScalarType.F32, (2, 4))
+
+
+def test_builds_multiple_blocks_with_function_wide_value_ids() -> None:
+    function = ModuleBuilder().func(
+        name="main",
+        arg_types=[ir.ScalarType.I32],
+    )
+
+    second = function.body.block([ir.ScalarType.F32])
+    result = second.f32(1.0)
+
+    assert function.body.region is function.function.body
+    assert function.entry is function.body.blocks[0]
+    assert function.body.blocks == [function.entry, second]
+    assert second.args[0].id == ir.ValueId(1)
+    assert result.id == ir.ValueId(2)
+
+
+def test_builds_if_regions_and_preserves_result_order() -> None:
+    function = ModuleBuilder().func(
+        name="main",
+        ret_types=[ir.ScalarType.I32, ir.ScalarType.F32],
+    )
+    condition = function.entry.bool(True)
+    conditional = function.entry.if_(
+        condition,
+        result_types=[ir.ScalarType.I32, ir.ScalarType.F32],
+    )
+
+    then_block = conditional.then_region.block()
+    then_block.yield_(then_block.i32(1), then_block.f32(2.0))
+    else_block = conditional.else_region.block()
+    else_block.yield_(else_block.i32(3), else_block.f32(4.0))
+    function.entry.return_(*conditional.results)
+
+    assert conditional.operation.results == conditional.results
+    assert [value.id for value in conditional.results] == [
+        ir.ValueId(1),
+        ir.ValueId(2),
+    ]
+    assert conditional.operation.then_region is conditional.then_region.region
+    assert conditional.operation.else_region is conditional.else_region.region
+    assert function.entry.block.operations == [
+        ir.Const(condition, True),
+        conditional.operation,
+        ir.Return(conditional.results),
+    ]
+
+
+def test_if_requires_boolean_condition_without_allocating_results() -> None:
+    function = ModuleBuilder().func(name="main")
+    condition = function.entry.i32(1)
+
+    with pytest.raises(TypeError, match="condition must be boolean"):
+        function.entry.if_(condition, result_types=[ir.ScalarType.I32])
+
+    assert function.entry.i32(2).id == ir.ValueId(1)

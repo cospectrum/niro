@@ -45,12 +45,7 @@ class TensorType:
     shape: Shape | None
 
     def __post_init__(self) -> None:
-        if self.shape is None:
-            return
-        shape = tuple(self.shape)
-        if any(dimension is not None and dimension < 0 for dimension in shape):
-            raise ValueError("tensor dimensions cannot be negative")
-        object.__setattr__(self, "shape", shape)
+        validate_tensor_type(self)
 
 
 type Type = ScalarType | TensorType
@@ -64,8 +59,7 @@ class Value:
     type: Type
 
     def __post_init__(self) -> None:
-        if self.id < 0:
-            raise ValueError("value ID cannot be negative")
+        validate_value(self)
 
 
 type Attribute = None | bool | int | float | str | bytes | tuple[Attribute, ...]
@@ -78,32 +72,7 @@ class Const:
     value: Literal
 
     def __post_init__(self) -> None:
-        match self.result.type:
-            case ScalarType.BOOL if isinstance(self.value, bool):
-                pass
-            case ScalarType.I32 | ScalarType.I64 if (
-                isinstance(self.value, int) and not isinstance(self.value, bool)
-            ):
-                pass
-            case ScalarType.F32 | ScalarType.F64 if isinstance(self.value, float):
-                pass
-            case TensorType(element_type, shape) if (
-                isinstance(self.value, bytes)
-                and shape is not None
-                and all(dimension is not None for dimension in shape)
-            ):
-                size = math.prod(dimension for dimension in shape if dimension is not None)
-                expected = size * element_type.byte_width
-                if len(self.value) != expected:
-                    raise ValueError(
-                        f"tensor constant has {len(self.value)} bytes, expected {expected}"
-                    )
-            case TensorType():
-                raise TypeError(
-                    "tensor constant requires packed bytes and a static shape"
-                )
-            case _:
-                raise TypeError("constant value does not match its result type")
+        validate_const(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,9 +82,7 @@ class Transpose:
     permutation: tuple[int, ...]
 
     def __post_init__(self) -> None:
-        expected = transpose_result_type(self.operand.type, self.permutation)
-        if self.result.type != expected:
-            raise TypeError("transpose result type does not match its operands")
+        validate_transpose(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,7 +92,7 @@ class Add:
     rhs: Value
 
     def __post_init__(self) -> None:
-        _check_arithmetic_types("add", self.result, self.lhs, self.rhs)
+        validate_add(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,7 +102,7 @@ class Mul:
     rhs: Value
 
     def __post_init__(self) -> None:
-        _check_arithmetic_types("mul", self.result, self.lhs, self.rhs)
+        validate_mul(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,8 +112,7 @@ class MatMul:
     rhs: Value
 
     def __post_init__(self) -> None:
-        if self.result.type != matmul_result_type(self.lhs.type, self.rhs.type):
-            raise TypeError("matmul result type does not match its operands")
+        validate_matmul(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +139,9 @@ class If:
     then_region: Region
     else_region: Region
 
+    def __post_init__(self) -> None:
+        validate_if(self)
+
 
 @dataclass(frozen=True, slots=True)
 class UnknownOp:
@@ -185,8 +154,7 @@ class UnknownOp:
     regions: tuple[Region, ...] = ()
 
     def __post_init__(self) -> None:
-        if not self.name:
-            raise ValueError("unknown operation name cannot be empty")
+        validate_unknown_op(self)
 
 
 type Op = (
@@ -220,8 +188,7 @@ class Function:
     attributes: dict[str, Attribute] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not self.name:
-            raise ValueError("function name cannot be empty")
+        validate_function(self)
 
     @property
     def arguments(self) -> tuple[Value, ...]:
@@ -265,7 +232,85 @@ def matmul_result_type(lhs: Type, rhs: Type) -> TensorType:
     return TensorType(lhs.element_type, (lhs.shape[0], rhs.shape[1]))
 
 
-def _check_arithmetic_types(
+def validate_tensor_type(tensor_type: TensorType) -> None:
+    if tensor_type.shape is None:
+        return
+    if any(
+        dimension is not None and dimension < 0
+        for dimension in tensor_type.shape
+    ):
+        raise ValueError("tensor dimensions cannot be negative")
+
+
+def validate_value(value: Value) -> None:
+    if value.id < 0:
+        raise ValueError("value ID cannot be negative")
+
+
+def validate_const(op: Const) -> None:
+    match op.result.type:
+        case ScalarType.BOOL if isinstance(op.value, bool):
+            pass
+        case ScalarType.I32 | ScalarType.I64 if (
+            isinstance(op.value, int) and not isinstance(op.value, bool)
+        ):
+            pass
+        case ScalarType.F32 | ScalarType.F64 if isinstance(op.value, float):
+            pass
+        case TensorType(element_type, shape) if (
+            isinstance(op.value, bytes)
+            and shape is not None
+            and all(dimension is not None for dimension in shape)
+        ):
+            size = math.prod(
+                dimension for dimension in shape if dimension is not None
+            )
+            expected = size * element_type.byte_width
+            if len(op.value) != expected:
+                raise ValueError(
+                    f"tensor constant has {len(op.value)} bytes, expected {expected}"
+                )
+        case TensorType():
+            raise TypeError("tensor constant requires packed bytes and a static shape")
+        case _:
+            raise TypeError("constant value does not match its result type")
+
+
+def validate_transpose(op: Transpose) -> None:
+    expected = transpose_result_type(op.operand.type, op.permutation)
+    if op.result.type != expected:
+        raise TypeError("transpose result type does not match its operands")
+
+
+def validate_add(op: Add) -> None:
+    _require_matching_numeric_types("add", op.result, op.lhs, op.rhs)
+
+
+def validate_mul(op: Mul) -> None:
+    _require_matching_numeric_types("mul", op.result, op.lhs, op.rhs)
+
+
+def validate_matmul(op: MatMul) -> None:
+    if op.result.type != matmul_result_type(op.lhs.type, op.rhs.type):
+        raise TypeError("matmul result type does not match its operands")
+
+
+def validate_if(op: If) -> None:
+    if op.condition.type is not ScalarType.BOOL:
+        raise TypeError("if condition must be boolean")
+
+
+def validate_unknown_op(op: UnknownOp) -> None:
+    if not op.name:
+        raise ValueError("unknown operation name cannot be empty")
+
+
+def validate_function(function: Function) -> None:
+    if not function.name:
+        raise ValueError("function name cannot be empty")
+
+
+def _require_matching_numeric_types(
     operation: str,
     result: Value,
     lhs: Value,

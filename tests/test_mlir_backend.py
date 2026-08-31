@@ -23,8 +23,8 @@ def test_lowers_public_entry_point_and_tensor_add() -> None:
         arg_types=[tensor_type, tensor_type],
         ret_types=[tensor_type],
     )
-    result = function.add(*function.args)
-    function.return_(result)
+    result = function.entry.add(*function.args)
+    function.entry.return_(result)
     module.entry_point(function)
 
     text = mlir_text(lower_to_mlir(module.ir))
@@ -44,9 +44,9 @@ def test_lowers_tensor_weight_to_private_immutable_global() -> None:
         arg_types=[tensor_type],
         ret_types=[tensor_type],
     )
-    weight = function.tensor(data=data, result_type=tensor_type)
-    result = function.matmul(function.args[0], weight)
-    function.return_(result)
+    weight = function.entry.tensor(data=data, result_type=tensor_type)
+    result = function.entry.matmul(function.args[0], weight)
+    function.entry.return_(result)
     module.entry_point(function)
 
     lowered = lower_to_mlir(module.ir)
@@ -69,15 +69,15 @@ def test_lowers_private_helper_and_call() -> None:
         arg_types=[ir.ScalarType.I32],
         ret_types=[ir.ScalarType.I32],
     )
-    helper.return_(helper.args[0])
+    helper.entry.return_(helper.args[0])
     main = module.func(
         name="model",
         arg_types=[ir.ScalarType.I32],
         ret_types=[ir.ScalarType.I32],
     )
-    result = main.call(helper, main.args[0])
+    result = main.entry.call(helper, main.args[0])
     assert isinstance(result, ir.Value)
-    main.return_(result)
+    main.entry.return_(result)
     module.entry_point(main)
 
     text = mlir_text(lower_to_mlir(module.ir))
@@ -96,8 +96,8 @@ def test_lowers_static_transpose() -> None:
         arg_types=[input_type],
         ret_types=[output_type],
     )
-    result = function.transpose(function.args[0], [1, 0])
-    function.return_(result)
+    result = function.entry.transpose(function.args[0], [1, 0])
+    function.entry.return_(result)
     module.entry_point(function)
 
     text = mlir_text(lower_to_mlir(module.ir))
@@ -145,7 +145,7 @@ def test_preserves_metadata_with_niro_namespace() -> None:
     module = ModuleBuilder()
     function = module.func(name="model")
     function.function.attributes["note"] = "function"
-    function.return_()
+    function.entry.return_()
     module.ir.attributes["version"] = 1
     module.entry_point(function)
 
@@ -162,12 +162,12 @@ def test_rejects_unknown_operation() -> None:
         arg_types=[ir.ScalarType.F32],
         ret_types=[ir.ScalarType.F32],
     )
-    (result,) = function.unknown(
+    (result,) = function.entry.unknown(
         name="onnx.Relu",
         operands=function.args,
         result_types=[ir.ScalarType.F32],
     )
-    function.return_(result)
+    function.entry.return_(result)
     module.entry_point(function)
 
     with pytest.raises(
@@ -188,11 +188,11 @@ def test_rejects_dynamic_matmul() -> None:
         arg_types=[tensor_type, tensor_type],
         ret_types=[tensor_type],
     )
-    result = function.matmul(
+    result = function.entry.matmul(
         function.args[0],
         function.args[1],
     )
-    function.return_(result)
+    function.entry.return_(result)
     module.entry_point(function)
 
     with pytest.raises(

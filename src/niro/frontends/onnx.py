@@ -8,7 +8,7 @@ import onnx
 from onnx import numpy_helper
 
 from niro import ir
-from niro.builder import FunctionBuilder, ModuleBuilder
+from niro.builder import BlockBuilder, ModuleBuilder
 
 type OnnxValueName = str
 
@@ -17,7 +17,7 @@ type OnnxValueName = str
 class Ctx:
     graph: onnx.GraphProto
     module: ModuleBuilder
-    function: FunctionBuilder
+    block: BlockBuilder
     types: dict[OnnxValueName, ir.Type]
     values: dict[OnnxValueName, ir.Value]
 
@@ -47,7 +47,7 @@ def import_onnx(onnx_model: onnx.ModelProto) -> ir.Module:
     ctx = Ctx(
         graph=graph,
         module=module,
-        function=function,
+        block=function.entry,
         types=types,
         values={},
     )
@@ -62,14 +62,14 @@ def import_onnx(onnx_model: onnx.ModelProto) -> ir.Module:
         initializer_type = _tensor_type(
             initializer.data_type, tuple(initializer.dims)
         )
-        ctx.values[initializer.name] = function.tensor(
+        ctx.values[initializer.name] = ctx.block.tensor(
             data=_initializer_data(initializer),
             result_type=initializer_type,
         )
     for node in graph.node:
         _import_node(ctx, node)
 
-    function.return_(
+    ctx.block.return_(
         *(_lookup_value(ctx.values, value.name) for value in graph.output)
     )
     module.entry_point(function)
@@ -104,21 +104,21 @@ def _import_node(
             _record_output(
                 ctx,
                 node,
-                ctx.function.add(lhs, rhs),
+                ctx.block.add(lhs, rhs),
             )
         case "Mul":
             lhs, rhs = _require_two_inputs(node, operands)
             _record_output(
                 ctx,
                 node,
-                ctx.function.mul(lhs, rhs),
+                ctx.block.mul(lhs, rhs),
             )
         case "MatMul":
             lhs, rhs = _require_two_inputs(node, operands)
             _record_output(
                 ctx,
                 node,
-                ctx.function.matmul(lhs, rhs),
+                ctx.block.matmul(lhs, rhs),
             )
         case "Transpose":
             if len(operands) != 1:
@@ -135,7 +135,7 @@ def _import_node(
             _record_output(
                 ctx,
                 node,
-                ctx.function.transpose(operands[0], permutation),
+                ctx.block.transpose(operands[0], permutation),
             )
         case _:
             _import_unknown(ctx, node, operands)
@@ -150,7 +150,7 @@ def _import_unknown(
         raise NotImplementedError(
             f"optional outputs are not supported for {node.op_type}"
         )
-    results = ctx.function.unknown(
+    results = ctx.block.unknown(
         name=_operation_name(node),
         operands=operands,
         result_types=[
