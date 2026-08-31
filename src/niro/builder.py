@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import builtins
-from collections.abc import Sequence
-from typing import Final
+from collections.abc import Callable, Mapping, Sequence
+from typing import Final, cast
 
 from niro import ir
 
@@ -14,7 +14,7 @@ type CallTarget = FunctionBuilder | ir.Function | str
 
 
 class ModuleBuilder:
-    """Build a module and maintain its function symbol table.
+    """Construct a Niro module one function at a time.
 
     The resulting ir.Module is available as builder.ir.
     """
@@ -30,10 +30,7 @@ class ModuleBuilder:
         ret_types: Sequence[ir.Type] = (),
     ) -> FunctionBuilder:
         """Create a defined function with one empty entry block."""
-        self._require_unique_function_name(name)
-        builder = FunctionBuilder(self, name, arg_types, ret_types)
-        self._add_function(builder.function)
-        return builder
+        return FunctionBuilder(self, name, arg_types, ret_types)
 
     def extern(
         self,
@@ -42,22 +39,21 @@ class ModuleBuilder:
         ret_types: Sequence[ir.Type] = (),
     ) -> ir.Function:
         """Declare a function whose implementation is outside this module."""
-        self._require_unique_function_name(name)
         function = ir.Function(
             name,
             ir.FunctionType(tuple(arg_types), tuple(ret_types)),
         )
-        self._add_function(function)
+        self._register_function(function)
         return function
 
-    def entry_point(self, function: FunctionBuilder | ir.Function | str) -> None:
+    def set_entry_point(self, function: FunctionBuilder | ir.Function | str) -> None:
         """Select the function used as the program entry point."""
-        resolved = self.resolve(function)
+        resolved = self.resolve_function(function)
         if resolved.body is None:
             raise ValueError("entry point must be a defined function")
         self.ir.attributes[ENTRY_POINT_ATTR] = resolved.name
 
-    def resolve(self, function: CallTarget) -> ir.Function:
+    def resolve_function(self, function: CallTarget) -> ir.Function:
         """Resolve a builder, function, or symbol name in this module."""
         match function:
             case FunctionBuilder():
@@ -76,19 +72,15 @@ class ModuleBuilder:
             )
         return resolved
 
-    def _require_unique_function_name(self, name: str) -> None:
-        if not name:
-            raise ValueError("function name cannot be empty")
-        if name in self._functions:
-            raise ValueError(f"duplicate function: {name!r}")
-
-    def _add_function(self, function: ir.Function) -> None:
+    def _register_function(self, function: ir.Function) -> None:
+        if function.name in self._functions:
+            raise ValueError(f"duplicate function: {function.name!r}")
         self.ir.functions.append(function)
         self._functions[function.name] = function
 
 
 class FunctionBuilder:
-    """Build operations in the entry block of one function.
+    """Construct a function and its body region.
 
     Create one with ModuleBuilder.func().
     The resulting ir.Function is available as builder.function.
@@ -102,25 +94,112 @@ class FunctionBuilder:
         ret_types: Sequence[ir.Type],
     ) -> None:
         self._module = module
-        self._values = [
-            ir.Value(ir.ValueId(index), value_type)
-            for index, value_type in enumerate(arg_types)
-        ]
-        self._block = ir.Block(arguments=tuple(self._values))
+        self._values: list[ir.Value] = []
+        region = ir.Region()
         self.function = ir.Function(
             name,
             ir.FunctionType(tuple(arg_types), tuple(ret_types)),
-            ir.Region([self._block]),
+            region,
         )
+        self.body = RegionBuilder(self, region)
+        self.entry = self.body.block(arg_types)
+        module._register_function(self.function)
 
     @property
     def args(self) -> tuple[ir.Value, ...]:
-        return self.function.arguments
+        return self.entry.args
+
+    def region(self) -> RegionBuilder:
+        """Create a detached region owned by this function."""
+        return RegionBuilder(self, ir.Region())
+
+    def _new_values(self, value_types: Sequence[ir.Type]) -> tuple[ir.Value, ...]:
+        return tuple(
+            ir.Value(ir.ValueId(len(self._values) + index), value_type)
+            for index, value_type in enumerate(value_types)
+        )
+
+    def _commit_values(self, values: Sequence[ir.Value]) -> None:
+        self._values.extend(values)
+
+    def _validate_owned_value(self, value: ir.Value) -> None:
+        index = int(value.id)
+        if index >= len(self._values) or self._values[index] is not value:
+            raise ValueError("value does not belong to this function")
+
+    def _validate_call_signature(
+        self,
+        function: ir.Function,
+        arguments: tuple[ir.Value, ...],
+    ) -> None:
+        for argument in arguments:
+            self._validate_owned_value(argument)
+        actual = tuple(argument.type for argument in arguments)
+        if actual != function.type.inputs:
+            raise TypeError(
+                f"call argument types {actual!r} do not match {function.type.inputs!r}"
+            )
+
+
+class RegionBuilder:
+    """Construct blocks in a region."""
+
+    def __init__(self, function: FunctionBuilder, region: ir.Region) -> None:
+        self._function = function
+        self.region = region
+        self.blocks: list[BlockBuilder] = []
+
+    def block(self, arg_types: Sequence[ir.Type] = ()) -> BlockBuilder:
+        """Append a block with arguments of the given types."""
+        arguments = self._function._new_values(arg_types)
+        block = ir.Block(arguments=arguments)
+        builder = BlockBuilder(self._function, self, block)
+        self._function._commit_values(arguments)
+        self.region.blocks.append(block)
+        self.blocks.append(builder)
+        return builder
+
+
+class IfBuilder:
+    """Construct the regions of an if operation."""
+
+    def __init__(
+        self,
+        operation: ir.If,
+        then_region: RegionBuilder,
+        else_region: RegionBuilder,
+    ) -> None:
+        self.operation = operation
+        self.then_region = then_region
+        self.else_region = else_region
+
+    @property
+    def results(self) -> tuple[ir.Value, ...]:
+        return self.operation.results
+
+
+class BlockBuilder:
+    """Construct operations in one block."""
+
+    def __init__(
+        self,
+        function: FunctionBuilder,
+        region: RegionBuilder,
+        block: ir.Block,
+    ) -> None:
+        self._function = function
+        self.region = region
+        self.block = block
+
+    @property
+    def args(self) -> tuple[ir.Value, ...]:
+        return self.block.arguments
 
     def constant(self, value: ir.Literal, result_type: ir.Type) -> ir.Value:
-        result = self._new_value(result_type)
-        self._append(ir.Const(result, value))
-        return result
+        return self._append_result(
+            result_type,
+            lambda result: ir.Const(result, value),
+        )
 
     def bool(self, value: builtins.bool) -> ir.Value:
         return self.constant(value, ir.ScalarType.BOOL)
@@ -137,76 +216,105 @@ class FunctionBuilder:
     def f64(self, value: float) -> ir.Value:
         return self.constant(value, ir.ScalarType.F64)
 
+    def tensor(self, data: bytes, result_type: ir.TensorType) -> ir.Value:
+        """Create a tensor constant from contiguous little-endian data."""
+        return self.constant(data, result_type)
+
     def add(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-        self._require_same_type("add", lhs, rhs)
-        result = self._new_value(lhs.type)
-        self._append(ir.Add(result, lhs, rhs), operands=(lhs, rhs))
-        return result
+        return self._append_result(
+            lhs.type,
+            lambda result: ir.Add(result, lhs, rhs),
+            operands=(lhs, rhs),
+        )
 
     def mul(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-        self._require_same_type("mul", lhs, rhs)
-        result = self._new_value(lhs.type)
-        self._append(ir.Mul(result, lhs, rhs), operands=(lhs, rhs))
-        return result
+        return self._append_result(
+            lhs.type,
+            lambda result: ir.Mul(result, lhs, rhs),
+            operands=(lhs, rhs),
+        )
 
     def matmul(
         self,
         lhs: ir.Value,
         rhs: ir.Value,
-        result_type: ir.Type,
     ) -> ir.Value:
-        self._require_owned(lhs)
-        self._require_owned(rhs)
-        result = self._new_value(result_type)
-        self._append(ir.MatMul(result, lhs, rhs), operands=(lhs, rhs))
-        return result
+        result_type = ir.matmul_result_type(lhs.type, rhs.type)
+        return self._append_result(
+            result_type,
+            lambda result: ir.MatMul(result, lhs, rhs),
+            operands=(lhs, rhs),
+        )
 
     def transpose(
         self,
         operand: ir.Value,
         permutation: Sequence[int],
     ) -> ir.Value:
-        self._require_owned(operand)
         normalized = tuple(permutation)
-        match operand.type:
-            case ir.TensorType(_, None):
-                result_type = operand.type
-            case ir.TensorType(element_type, shape) if shape is not None:
-                if sorted(normalized) != list(range(len(shape))):
-                    raise ValueError(
-                        "transpose permutation must contain every dimension once"
-                    )
-                result_type = ir.TensorType(
-                    element_type,
-                    tuple(shape[index] for index in normalized),
-                )
-            case _:
-                raise TypeError("transpose operand must be a tensor")
-
-        result = self._new_value(result_type)
-        self._append(
-            ir.Transpose(result, operand, normalized),
+        result_type = ir.transpose_result_type(operand.type, normalized)
+        return self._append_result(
+            result_type,
+            lambda result: ir.Transpose(result, operand, normalized),
             operands=(operand,),
         )
-        return result
+
+    def unknown(
+        self,
+        name: str,
+        operands: Sequence[ir.Value] = (),
+        result_types: Sequence[ir.Type] = (),
+        attributes: Mapping[str, ir.Attribute] | None = None,
+    ) -> tuple[ir.Value, ...]:
+        """Create an operation whose semantics are not known to Niro."""
+        normalized_operands = tuple(operands)
+        return self._append_results(
+            result_types,
+            lambda results: ir.UnknownOp(
+                name=name,
+                operands=normalized_operands,
+                results=results,
+                attributes=dict(attributes or {}),
+            ),
+            operands=normalized_operands,
+        )
+
+    def if_(
+        self,
+        condition: ir.Value,
+        result_types: Sequence[ir.Type] = (),
+    ) -> IfBuilder:
+        """Append an if operation and return builders for its two regions."""
+        then_region = self._function.region()
+        else_region = self._function.region()
+        self._append_results(
+            result_types,
+            lambda values: ir.If(
+                results=values,
+                condition=condition,
+                then_region=then_region.region,
+                else_region=else_region.region,
+            ),
+            operands=(condition,),
+        )
+        operation = cast(ir.If, self.block.operations[-1])
+        return IfBuilder(operation, then_region, else_region)
 
     def call(
         self,
         callee: CallTarget,
         arguments: ir.Value | Sequence[ir.Value] = (),
     ) -> ir.Value | tuple[ir.Value, ...] | None:
-        target = self._module.resolve(callee)
+        target = self._function._module.resolve_function(callee)
         match arguments:
             case ir.Value():
                 normalized = (arguments,)
             case _:
                 normalized = tuple(arguments)
-        self._require_signature(target, normalized)
-        results = tuple(
-            self._new_value(result_type) for result_type in target.type.outputs
-        )
-        self._append(
-            ir.Call(target.name, normalized, results),
+        self._function._validate_call_signature(target, normalized)
+        results = self._append_results(
+            target.type.outputs,
+            lambda values: ir.Call(target.name, normalized, values),
             operands=normalized,
         )
         if not results:
@@ -216,62 +324,63 @@ class FunctionBuilder:
         return results
 
     def return_(self, *operands: ir.Value) -> None:
-        expected = self.function.type.outputs
+        expected = self._function.function.type.outputs
         actual = tuple(value.type for value in operands)
         if actual != expected:
             raise TypeError(f"return types {actual!r} do not match {expected!r}")
-        self._append(ir.Return(operands), operands=operands)
+        self._append_operation(ir.Return(operands), operands=operands)
 
-    def _new_value(self, value_type: ir.Type) -> ir.Value:
-        if self._is_terminated():
-            raise ValueError("cannot add an operation after return")
-        value = ir.Value(ir.ValueId(len(self._values)), value_type)
-        self._values.append(value)
-        return value
+    def yield_(self, *operands: ir.Value) -> None:
+        self._append_operation(ir.Yield(operands), operands=operands)
 
-    def _append(self, operation: ir.Op, operands: Sequence[ir.Value] = ()) -> None:
-        if self._is_terminated():
-            raise ValueError("cannot add an operation after return")
+    def _append_result(
+        self,
+        result_type: ir.Type,
+        make_operation: Callable[[ir.Value], ir.Op],
+        operands: Sequence[ir.Value] = (),
+    ) -> ir.Value:
+        (result,) = self._append_results(
+            (result_type,),
+            lambda results: make_operation(results[0]),
+            operands,
+        )
+        return result
+
+    def _append_results(
+        self,
+        result_types: Sequence[ir.Type],
+        make_operation: Callable[[tuple[ir.Value, ...]], ir.Op],
+        operands: Sequence[ir.Value] = (),
+    ) -> tuple[ir.Value, ...]:
+        if self._has_terminator():
+            raise ValueError("cannot add an operation after a block terminator")
         for operand in operands:
-            self._require_owned(operand)
-        self._block.operations.append(operation)
+            self._validate_owned_value(operand)
+        results = self._function._new_values(result_types)
+        operation = make_operation(results)
+        self._function._commit_values(results)
+        self.block.operations.append(operation)
+        return results
 
-    def _is_terminated(self) -> builtins.bool:
-        if not self._block.operations:
+    def _append_operation(
+        self,
+        operation: ir.Op,
+        operands: Sequence[ir.Value] = (),
+    ) -> None:
+        if self._has_terminator():
+            raise ValueError("cannot add an operation after a block terminator")
+        for operand in operands:
+            self._validate_owned_value(operand)
+        self.block.operations.append(operation)
+
+    def _has_terminator(self) -> builtins.bool:
+        if not self.block.operations:
             return False
-        match self._block.operations[-1]:
-            case ir.Return():
+        match self.block.operations[-1]:
+            case ir.Return() | ir.Yield():
                 return True
             case _:
                 return False
 
-    def _require_owned(self, value: ir.Value) -> None:
-        index = int(value.id)
-        if index < 0 or index >= len(self._values):
-            raise ValueError("value does not belong to this function")
-        if self._values[index] is not value:
-            raise ValueError("value does not belong to this function")
-
-    def _require_same_type(
-        self,
-        operation: str,
-        lhs: ir.Value,
-        rhs: ir.Value,
-    ) -> None:
-        self._require_owned(lhs)
-        self._require_owned(rhs)
-        if lhs.type != rhs.type:
-            raise TypeError(f"{operation} operands must have the same type")
-
-    def _require_signature(
-        self,
-        function: ir.Function,
-        arguments: tuple[ir.Value, ...],
-    ) -> None:
-        for argument in arguments:
-            self._require_owned(argument)
-        actual = tuple(argument.type for argument in arguments)
-        if actual != function.type.inputs:
-            raise TypeError(
-                f"call argument types {actual!r} do not match {function.type.inputs!r}"
-            )
+    def _validate_owned_value(self, value: ir.Value) -> None:
+        self._function._validate_owned_value(value)
