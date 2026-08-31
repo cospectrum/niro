@@ -40,7 +40,7 @@ def lower_to_mlir(module: ir.Module) -> builtin.ModuleOp:
         _lower_function(function, entry_point, globals_)
         for function in module.functions
     ]
-    attributes = _attributes(module.attributes, exclude={ENTRY_POINT_ATTR})
+    attributes = _lower_attributes(module.attributes, exclude={ENTRY_POINT_ATTR})
     result = builtin.ModuleOp([*globals_, *functions], attributes=attributes)
     result.verify()
     return result
@@ -51,11 +51,11 @@ def _lower_function(
     entry_point: str,
     globals_: list[Operation],
 ) -> func.FuncOp:
-    inputs = [_type(value_type) for value_type in function.type.inputs]
-    outputs = [_type(value_type) for value_type in function.type.outputs]
+    inputs = [_lower_type(value_type) for value_type in function.type.inputs]
+    outputs = [_lower_type(value_type) for value_type in function.type.outputs]
     if function.body is None:
         result = func.FuncOp.external(function.name, inputs, outputs)
-        result.attributes.update(_attributes(function.attributes))
+        result.attributes.update(_lower_attributes(function.attributes))
         return result
     (niro_block,) = function.body.blocks
     block = Block(arg_types=inputs)
@@ -77,7 +77,7 @@ def _lower_function(
         Region(block),
         visibility="public" if function.name == entry_point else "private",
     )
-    result.attributes.update(_attributes(function.attributes))
+    result.attributes.update(_lower_attributes(function.attributes))
     if function.name == entry_point:
         result.attributes["niro.entry_point"] = builtin.UnitAttr()
     return result
@@ -103,23 +103,27 @@ def _lower_operation(ctx: Ctx, operation: ir.Op) -> None:
         case ir.Call():
             lowered = func.CallOp(
                 operation.callee,
-                [_value(ctx, value) for value in operation.arguments],
-                [_type(value.type) for value in operation.results],
+                [_lookup_value(ctx, value) for value in operation.arguments],
+                [_lower_type(value.type) for value in operation.results],
             )
             ctx.block.add_op(lowered)
             _record_results(ctx, operation.results, lowered.results)
         case ir.Return():
             ctx.block.add_op(
-                func.ReturnOp(*(_value(ctx, value) for value in operation.operands))
+                func.ReturnOp(
+                    *(_lookup_value(ctx, value) for value in operation.operands)
+                )
             )
         case ir.Yield():
             ctx.block.add_op(
-                scf.YieldOp(*(_value(ctx, value) for value in operation.operands))
+                scf.YieldOp(
+                    *(_lookup_value(ctx, value) for value in operation.operands)
+                )
             )
         case ir.If():
             lowered = scf.IfOp(
-                _value(ctx, operation.condition),
-                [_type(value.type) for value in operation.results],
+                _lookup_value(ctx, operation.condition),
+                [_lower_type(value.type) for value in operation.results],
                 _lower_region(ctx, operation.then_region),
                 _lower_region(ctx, operation.else_region),
             )
@@ -144,11 +148,9 @@ def _lower_const(ctx: Ctx, operation: ir.Const) -> None:
         data = cast(bytes, operation.value)
         tensor_type = cast(
             builtin.TensorType[builtin.AnyDenseElement],
-            _type(operation.result.type),
+            _lower_type(operation.result.type),
         )
-        value = builtin.DenseIntOrFPElementsAttr(
-            tensor_type, builtin.BytesAttr(data)
-        )
+        value = builtin.DenseIntOrFPElementsAttr(tensor_type, builtin.BytesAttr(data))
         symbol = f"__niro_{ctx.function_name}_{int(operation.result.id)}"
         ctx.globals.append(
             ml_program.GlobalOp(
@@ -164,7 +166,7 @@ def _lower_const(ctx: Ctx, operation: ir.Const) -> None:
         )
     else:
         scalar_type = operation.result.type
-        lowered = arith.ConstantOp(_scalar_attribute(operation.value, scalar_type))
+        lowered = arith.ConstantOp(_lower_scalar_literal(operation.value, scalar_type))
     ctx.block.add_op(lowered)
     ctx.values[operation.result.id] = lowered.results[0]
 
@@ -182,9 +184,9 @@ def _lower_arithmetic(
         else integer_op
     )
     lowered = op_type(
-        _value(ctx, operation.lhs),
-        _value(ctx, operation.rhs),
-        result_type=_type(operation.result.type),
+        _lookup_value(ctx, operation.lhs),
+        _lookup_value(ctx, operation.rhs),
+        result_type=_lower_type(operation.result.type),
     )
     ctx.block.add_op(lowered)
     ctx.values[operation.result.id] = lowered.result
@@ -193,13 +195,11 @@ def _lower_arithmetic(
 def _lower_transpose(ctx: Ctx, operation: ir.Transpose) -> None:
     result_type = cast(ir.TensorType, operation.result.type)
     _require_static_shape(result_type, "transpose")
-    lowered_type = _type(result_type)
+    lowered_type = _lower_type(result_type)
     empty = tensor.EmptyOp([], lowered_type)
-    permutation = builtin.DenseArrayBase.from_list(
-        builtin.i64, operation.permutation
-    )
+    permutation = builtin.DenseArrayBase.from_list(builtin.i64, operation.permutation)
     lowered = linalg.TransposeOp(
-        _value(ctx, operation.operand),
+        _lookup_value(ctx, operation.operand),
         empty.tensor,
         permutation,
         lowered_type,
@@ -215,21 +215,20 @@ def _lower_matmul(ctx: Ctx, operation: ir.MatMul) -> None:
     _require_static_shape(lhs_type, "matmul")
     _require_static_shape(rhs_type, "matmul")
     _require_static_shape(result_type, "matmul")
-    lowered_type = _type(result_type)
+    lowered_type = _lower_type(result_type)
     zero_value: int | float = (
-        0.0
-        if result_type.element_type in (ir.ScalarType.F32, ir.ScalarType.F64)
-        else 0
+        0.0 if result_type.element_type in (ir.ScalarType.F32, ir.ScalarType.F64) else 0
     )
-    zero = arith.ConstantOp(
-        _scalar_attribute(zero_value, result_type.element_type)
-    )
+    zero = arith.ConstantOp(_lower_scalar_literal(zero_value, result_type.element_type))
     empty = tensor.EmptyOp([], lowered_type)
     fill = linalg.FillOp(
         inputs=[zero.result], outputs=[empty.tensor], res=[lowered_type]
     )
     lowered = linalg.MatmulOp(
-        inputs=[_value(ctx, operation.lhs), _value(ctx, operation.rhs)],
+        inputs=[
+            _lookup_value(ctx, operation.lhs),
+            _lookup_value(ctx, operation.rhs),
+        ],
         outputs=[fill.results[0]],
         res=[lowered_type],
     )
@@ -238,13 +237,13 @@ def _lower_matmul(ctx: Ctx, operation: ir.MatMul) -> None:
 
 
 @overload
-def _type(
+def _lower_type(
     value_type: ir.ScalarType,
 ) -> builtin.AnyDenseElement: ...
 
 
 @overload
-def _type(
+def _lower_type(
     value_type: ir.TensorType,
 ) -> (
     builtin.TensorType[builtin.AnyDenseElement]
@@ -252,9 +251,9 @@ def _type(
 ): ...
 
 
-def _type(value_type: ir.Type) -> Attribute:
+def _lower_type(value_type: ir.Type) -> Attribute:
     if isinstance(value_type, ir.TensorType):
-        element_type = _scalar_type(value_type.element_type)
+        element_type = _lower_scalar_type(value_type.element_type)
         if value_type.shape is None:
             return builtin.UnrankedTensorType(element_type)
         dimensions = [
@@ -262,10 +261,10 @@ def _type(value_type: ir.Type) -> Attribute:
             for dimension in value_type.shape
         ]
         return builtin.TensorType(element_type, dimensions)
-    return _scalar_type(value_type)
+    return _lower_scalar_type(value_type)
 
 
-def _scalar_type(value_type: ir.ScalarType) -> builtin.AnyDenseElement:
+def _lower_scalar_type(value_type: ir.ScalarType) -> builtin.AnyDenseElement:
     match value_type:
         case ir.ScalarType.BOOL:
             return builtin.i1
@@ -279,7 +278,7 @@ def _scalar_type(value_type: ir.ScalarType) -> builtin.AnyDenseElement:
             return builtin.f64
 
 
-def _scalar_attribute(
+def _lower_scalar_literal(
     value: ir.Literal,
     value_type: ir.ScalarType,
 ) -> builtin.IntegerAttr | builtin.FloatAttr:
@@ -296,19 +295,19 @@ def _scalar_attribute(
             return builtin.FloatAttr(cast(float, value), builtin.f64)
 
 
-def _attributes(
+def _lower_attributes(
     attributes: dict[str, ir.Attribute],
     *,
     exclude: Collection[str] = (),
 ) -> dict[str, Attribute]:
     return {
-        name if "." in name else f"niro.{name}": _attribute(value)
+        name if "." in name else f"niro.{name}": _lower_attribute(value)
         for name, value in attributes.items()
         if name not in exclude
     }
 
 
-def _attribute(value: ir.Attribute) -> Attribute:
+def _lower_attribute(value: ir.Attribute) -> Attribute:
     if value is None:
         return builtin.UnitAttr()
     if isinstance(value, bool):
@@ -321,10 +320,10 @@ def _attribute(value: ir.Attribute) -> Attribute:
         return builtin.StringAttr(value)
     if isinstance(value, bytes):
         return builtin.BytesAttr(value)
-    return builtin.ArrayAttr(_attribute(element) for element in value)
+    return builtin.ArrayAttr(_lower_attribute(element) for element in value)
 
 
-def _value(ctx: Ctx, value: ir.Value) -> SSAValue:
+def _lookup_value(ctx: Ctx, value: ir.Value) -> SSAValue:
     return ctx.values[value.id]
 
 
@@ -335,9 +334,7 @@ def _record_results(
 ) -> None:
     ctx.values.update(
         (niro_value.id, mlir_value)
-        for niro_value, mlir_value in zip(
-            niro_values, mlir_values, strict=True
-        )
+        for niro_value, mlir_value in zip(niro_values, mlir_values, strict=True)
     )
 
 

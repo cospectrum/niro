@@ -204,7 +204,9 @@ class Module:
     attributes: dict[str, Attribute] = field(default_factory=dict)
 
 
-def transpose_result_type(operand_type: Type, permutation: tuple[int, ...]) -> TensorType:
+def transpose_result_type(
+    operand_type: Type, permutation: tuple[int, ...]
+) -> TensorType:
     if not isinstance(operand_type, TensorType):
         raise TypeError("transpose operand must be a tensor")
     if operand_type.shape is None:
@@ -235,10 +237,7 @@ def matmul_result_type(lhs: Type, rhs: Type) -> TensorType:
 def validate_tensor_type(tensor_type: TensorType) -> None:
     if tensor_type.shape is None:
         return
-    if any(
-        dimension is not None and dimension < 0
-        for dimension in tensor_type.shape
-    ):
+    if any(dimension is not None and dimension < 0 for dimension in tensor_type.shape):
         raise ValueError("tensor dimensions cannot be negative")
 
 
@@ -251,9 +250,9 @@ def validate_const(op: Const) -> None:
     match op.result.type:
         case ScalarType.BOOL if isinstance(op.value, bool):
             pass
-        case ScalarType.I32 | ScalarType.I64 if (
-            isinstance(op.value, int) and not isinstance(op.value, bool)
-        ):
+        case ScalarType.I32 | ScalarType.I64 if isinstance(
+            op.value, int
+        ) and not isinstance(op.value, bool):
             pass
         case ScalarType.F32 | ScalarType.F64 if isinstance(op.value, float):
             pass
@@ -262,9 +261,7 @@ def validate_const(op: Const) -> None:
             and shape is not None
             and all(dimension is not None for dimension in shape)
         ):
-            size = math.prod(
-                dimension for dimension in shape if dimension is not None
-            )
+            size = math.prod(dimension for dimension in shape if dimension is not None)
             expected = size * element_type.byte_width
             if len(op.value) != expected:
                 raise ValueError(

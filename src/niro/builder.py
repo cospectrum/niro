@@ -30,9 +30,7 @@ class ModuleBuilder:
         ret_types: Sequence[ir.Type] = (),
     ) -> FunctionBuilder:
         """Create a defined function with one empty entry block."""
-        builder = FunctionBuilder(self, name, arg_types, ret_types)
-        self._add_function(builder.function)
-        return builder
+        return FunctionBuilder(self, name, arg_types, ret_types)
 
     def extern(
         self,
@@ -45,17 +43,17 @@ class ModuleBuilder:
             name,
             ir.FunctionType(tuple(arg_types), tuple(ret_types)),
         )
-        self._add_function(function)
+        self._register_function(function)
         return function
 
-    def entry_point(self, function: FunctionBuilder | ir.Function | str) -> None:
+    def set_entry_point(self, function: FunctionBuilder | ir.Function | str) -> None:
         """Select the function used as the program entry point."""
-        resolved = self.resolve(function)
+        resolved = self.resolve_function(function)
         if resolved.body is None:
             raise ValueError("entry point must be a defined function")
         self.ir.attributes[ENTRY_POINT_ATTR] = resolved.name
 
-    def resolve(self, function: CallTarget) -> ir.Function:
+    def resolve_function(self, function: CallTarget) -> ir.Function:
         """Resolve a builder, function, or symbol name in this module."""
         match function:
             case FunctionBuilder():
@@ -74,7 +72,7 @@ class ModuleBuilder:
             )
         return resolved
 
-    def _add_function(self, function: ir.Function) -> None:
+    def _register_function(self, function: ir.Function) -> None:
         if function.name in self._functions:
             raise ValueError(f"duplicate function: {function.name!r}")
         self.ir.functions.append(function)
@@ -105,6 +103,7 @@ class FunctionBuilder:
         )
         self.body = RegionBuilder(self, region)
         self.entry = self.body.block(arg_types)
+        module._register_function(self.function)
 
     @property
     def args(self) -> tuple[ir.Value, ...]:
@@ -123,20 +122,18 @@ class FunctionBuilder:
     def _commit_values(self, values: Sequence[ir.Value]) -> None:
         self._values.extend(values)
 
-    def _require_owned(self, value: ir.Value) -> None:
+    def _validate_owned_value(self, value: ir.Value) -> None:
         index = int(value.id)
-        if index < 0 or index >= len(self._values):
-            raise ValueError("value does not belong to this function")
-        if self._values[index] is not value:
+        if index >= len(self._values) or self._values[index] is not value:
             raise ValueError("value does not belong to this function")
 
-    def _require_signature(
+    def _validate_call_signature(
         self,
         function: ir.Function,
         arguments: tuple[ir.Value, ...],
     ) -> None:
         for argument in arguments:
-            self._require_owned(argument)
+            self._validate_owned_value(argument)
         actual = tuple(argument.type for argument in arguments)
         if actual != function.type.inputs:
             raise TypeError(
@@ -173,9 +170,12 @@ class IfBuilder:
         else_region: RegionBuilder,
     ) -> None:
         self.operation = operation
-        self.results = operation.results
         self.then_region = then_region
         self.else_region = else_region
+
+    @property
+    def results(self) -> tuple[ir.Value, ...]:
+        return self.operation.results
 
 
 class BlockBuilder:
@@ -305,13 +305,13 @@ class BlockBuilder:
         callee: CallTarget,
         arguments: ir.Value | Sequence[ir.Value] = (),
     ) -> ir.Value | tuple[ir.Value, ...] | None:
-        target = self._function._module.resolve(callee)
+        target = self._function._module.resolve_function(callee)
         match arguments:
             case ir.Value():
                 normalized = (arguments,)
             case _:
                 normalized = tuple(arguments)
-        self._function._require_signature(target, normalized)
+        self._function._validate_call_signature(target, normalized)
         results = self._append_results(
             target.type.outputs,
             lambda values: ir.Call(target.name, normalized, values),
@@ -328,10 +328,10 @@ class BlockBuilder:
         actual = tuple(value.type for value in operands)
         if actual != expected:
             raise TypeError(f"return types {actual!r} do not match {expected!r}")
-        self._append(ir.Return(operands), operands=operands)
+        self._append_operation(ir.Return(operands), operands=operands)
 
     def yield_(self, *operands: ir.Value) -> None:
-        self._append(ir.Yield(operands), operands=operands)
+        self._append_operation(ir.Yield(operands), operands=operands)
 
     def _append_result(
         self,
@@ -352,24 +352,28 @@ class BlockBuilder:
         make_operation: Callable[[tuple[ir.Value, ...]], ir.Op],
         operands: Sequence[ir.Value] = (),
     ) -> tuple[ir.Value, ...]:
-        if self._is_terminated():
+        if self._has_terminator():
             raise ValueError("cannot add an operation after a block terminator")
         for operand in operands:
-            self._require_owned(operand)
+            self._validate_owned_value(operand)
         results = self._function._new_values(result_types)
         operation = make_operation(results)
         self._function._commit_values(results)
         self.block.operations.append(operation)
         return results
 
-    def _append(self, operation: ir.Op, operands: Sequence[ir.Value] = ()) -> None:
-        if self._is_terminated():
+    def _append_operation(
+        self,
+        operation: ir.Op,
+        operands: Sequence[ir.Value] = (),
+    ) -> None:
+        if self._has_terminator():
             raise ValueError("cannot add an operation after a block terminator")
         for operand in operands:
-            self._require_owned(operand)
+            self._validate_owned_value(operand)
         self.block.operations.append(operation)
 
-    def _is_terminated(self) -> builtins.bool:
+    def _has_terminator(self) -> builtins.bool:
         if not self.block.operations:
             return False
         match self.block.operations[-1]:
@@ -378,5 +382,5 @@ class BlockBuilder:
             case _:
                 return False
 
-    def _require_owned(self, value: ir.Value) -> None:
-        self._function._require_owned(value)
+    def _validate_owned_value(self, value: ir.Value) -> None:
+        self._function._validate_owned_value(value)

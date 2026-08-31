@@ -21,7 +21,7 @@ def test_builds_function_and_call_with_function_wide_value_ids() -> None:
     call_result = main.entry.call(add, [main.entry.f32(1.0), main.entry.f32(2.0)])
     assert isinstance(call_result, ir.Value)
     main.entry.return_(call_result)
-    module.entry_point(main)
+    module.set_entry_point(main)
 
     assert [value.id for value in add.args] == [ir.ValueId(0), ir.ValueId(1)]
     assert result.id == ir.ValueId(2)
@@ -38,6 +38,16 @@ def test_calls_external_function_by_name() -> None:
 
     assert main.entry.call("print_f32", main.entry.f32(1.0)) is None
     main.entry.return_()
+
+
+def test_rejects_duplicate_function_during_builder_construction() -> None:
+    module = ModuleBuilder()
+    module.func("main")
+
+    with pytest.raises(ValueError, match="duplicate function"):
+        module.func("main")
+
+    assert [function.name for function in module.ir.functions] == ["main"]
 
 
 def test_rejects_values_from_another_function() -> None:

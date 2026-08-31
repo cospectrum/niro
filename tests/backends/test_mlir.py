@@ -25,7 +25,7 @@ def test_lowers_public_entry_point_and_tensor_add() -> None:
     )
     result = function.entry.add(*function.args)
     function.entry.return_(result)
-    module.entry_point(function)
+    module.set_entry_point(function)
 
     text = mlir_text(lower_to_mlir(module.ir))
 
@@ -47,7 +47,7 @@ def test_lowers_tensor_weight_to_private_immutable_global() -> None:
     weight = function.entry.tensor(data=data, result_type=tensor_type)
     result = function.entry.matmul(function.args[0], weight)
     function.entry.return_(result)
-    module.entry_point(function)
+    module.set_entry_point(function)
 
     lowered = lower_to_mlir(module.ir)
 
@@ -78,7 +78,7 @@ def test_lowers_private_helper_and_call() -> None:
     result = main.entry.call(helper, main.args[0])
     assert isinstance(result, ir.Value)
     main.entry.return_(result)
-    module.entry_point(main)
+    module.set_entry_point(main)
 
     text = mlir_text(lower_to_mlir(module.ir))
 
@@ -98,7 +98,7 @@ def test_lowers_static_transpose() -> None:
     )
     result = function.entry.transpose(function.args[0], [1, 0])
     function.entry.return_(result)
-    module.entry_point(function)
+    module.set_entry_point(function)
 
     text = mlir_text(lower_to_mlir(module.ir))
 
@@ -147,11 +147,11 @@ def test_preserves_metadata_with_niro_namespace() -> None:
     function.function.attributes["note"] = "function"
     function.entry.return_()
     module.ir.attributes["version"] = 1
-    module.entry_point(function)
+    module.set_entry_point(function)
 
     text = mlir_text(lower_to_mlir(module.ir))
 
-    assert 'niro.version = 1 : i64' in text
+    assert "niro.version = 1 : i64" in text
     assert 'niro.note = "function"' in text
 
 
@@ -168,7 +168,7 @@ def test_rejects_unknown_operation() -> None:
         result_types=[ir.ScalarType.F32],
     )
     function.entry.return_(result)
-    module.entry_point(function)
+    module.set_entry_point(function)
 
     with pytest.raises(
         NotImplementedError,
@@ -193,7 +193,7 @@ def test_rejects_dynamic_matmul() -> None:
         function.args[1],
     )
     function.entry.return_(result)
-    module.entry_point(function)
+    module.set_entry_point(function)
 
     with pytest.raises(
         NotImplementedError,
