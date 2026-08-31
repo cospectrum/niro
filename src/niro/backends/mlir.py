@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Collection
 from dataclasses import dataclass
-from typing import cast
+from typing import cast, overload
 
 from xdsl.dialects import arith, builtin, func, ml_program, scf, tensor
 from xdsl.dialects.linalg import ops as linalg
@@ -58,9 +57,7 @@ def _lower_function(
         result = func.FuncOp.external(function.name, inputs, outputs)
         result.attributes.update(_attributes(function.attributes))
         return result
-    if len(function.body.blocks) != 1:
-        raise ValueError(f"function {function.name!r} must have one block")
-
+    (niro_block,) = function.body.blocks
     block = Block(arg_types=inputs)
     ctx = Ctx(
         block=block,
@@ -73,7 +70,7 @@ def _lower_function(
         globals=globals_,
         function_name=function.name,
     )
-    _lower_operations(ctx, function.body.blocks[0].operations)
+    _lower_operations(ctx, niro_block.operations)
     result = func.FuncOp(
         function.name,
         (inputs, outputs),
@@ -135,45 +132,39 @@ def _lower_operation(ctx: Ctx, operation: ir.Op) -> None:
 
 
 def _lower_region(ctx: Ctx, region: ir.Region) -> Region:
-    if len(region.blocks) != 1 or region.blocks[0].arguments:
-        raise ValueError("structured regions must have one block and no arguments")
+    (niro_block,) = region.blocks
     block = Block()
     nested = Ctx(block, dict(ctx.values), ctx.globals, ctx.function_name)
-    _lower_operations(nested, region.blocks[0].operations)
+    _lower_operations(nested, niro_block.operations)
     return Region(block)
 
 
 def _lower_const(ctx: Ctx, operation: ir.Const) -> None:
-    result_type = _type(operation.result.type)
     if isinstance(operation.result.type, ir.TensorType):
-        if not isinstance(operation.value, bytes):
-            raise TypeError("tensor constant data must be bytes")
-        _require_static_tensor(operation.result.type, "tensor constant")
-        expected_size = _tensor_byte_size(operation.result.type)
-        if len(operation.value) != expected_size:
-            raise ValueError(
-                f"tensor constant has {len(operation.value)} bytes, "
-                f"expected {expected_size}"
-            )
-        assert isinstance(result_type, builtin.TensorType)
+        data = cast(bytes, operation.value)
+        tensor_type = cast(
+            builtin.TensorType[builtin.AnyDenseElement],
+            _type(operation.result.type),
+        )
         value = builtin.DenseIntOrFPElementsAttr(
-            result_type, builtin.BytesAttr(operation.value)
+            tensor_type, builtin.BytesAttr(data)
         )
         symbol = f"__niro_{ctx.function_name}_{int(operation.result.id)}"
         ctx.globals.append(
             ml_program.GlobalOp(
                 builtin.StringAttr(symbol),
-                result_type,
+                tensor_type,
                 None,
                 value,
                 builtin.StringAttr("private"),
             )
         )
         lowered = ml_program.GlobalLoadConstantOp(
-            builtin.SymbolRefAttr(symbol), result_type
+            builtin.SymbolRefAttr(symbol), tensor_type
         )
     else:
-        lowered = arith.ConstantOp(_scalar_attribute(operation.value, result_type))
+        scalar_type = operation.result.type
+        lowered = arith.ConstantOp(_scalar_attribute(operation.value, scalar_type))
     ctx.block.add_op(lowered)
     ctx.values[operation.result.id] = lowered.results[0]
 
@@ -185,8 +176,6 @@ def _lower_arithmetic(
     float_op: type[arith.AddfOp | arith.MulfOp],
 ) -> None:
     scalar_type = _element_type(operation.result.type)
-    if scalar_type is ir.ScalarType.BOOL:
-        raise TypeError("boolean arithmetic is not supported")
     op_type = (
         float_op
         if scalar_type in (ir.ScalarType.F32, ir.ScalarType.F64)
@@ -202,11 +191,8 @@ def _lower_arithmetic(
 
 
 def _lower_transpose(ctx: Ctx, operation: ir.Transpose) -> None:
-    operand_type = _require_static_tensor(operation.operand.type, "transpose")
-    result_type = _require_static_tensor(operation.result.type, "transpose")
-    assert operand_type.shape is not None
-    if sorted(operation.permutation) != list(range(len(operand_type.shape))):
-        raise ValueError("transpose permutation must contain every dimension once")
+    result_type = cast(ir.TensorType, operation.result.type)
+    _require_static_shape(result_type, "transpose")
     lowered_type = _type(result_type)
     empty = tensor.EmptyOp([], lowered_type)
     permutation = builtin.DenseArrayBase.from_list(
@@ -223,23 +209,21 @@ def _lower_transpose(ctx: Ctx, operation: ir.Transpose) -> None:
 
 
 def _lower_matmul(ctx: Ctx, operation: ir.MatMul) -> None:
-    lhs_type = _require_matrix(operation.lhs.type, "matmul lhs")
-    rhs_type = _require_matrix(operation.rhs.type, "matmul rhs")
-    result_type = _require_matrix(operation.result.type, "matmul result")
-    if not (
-        lhs_type.element_type
-        is rhs_type.element_type
-        is result_type.element_type
-    ):
-        raise TypeError("matmul element types must match")
+    lhs_type = cast(ir.TensorType, operation.lhs.type)
+    rhs_type = cast(ir.TensorType, operation.rhs.type)
+    result_type = cast(ir.TensorType, operation.result.type)
+    _require_static_shape(lhs_type, "matmul")
+    _require_static_shape(rhs_type, "matmul")
+    _require_static_shape(result_type, "matmul")
     lowered_type = _type(result_type)
-    scalar_type = _type(result_type.element_type)
     zero_value: int | float = (
         0.0
         if result_type.element_type in (ir.ScalarType.F32, ir.ScalarType.F64)
         else 0
     )
-    zero = arith.ConstantOp(_scalar_attribute(zero_value, scalar_type))
+    zero = arith.ConstantOp(
+        _scalar_attribute(zero_value, result_type.element_type)
+    )
     empty = tensor.EmptyOp([], lowered_type)
     fill = linalg.FillOp(
         inputs=[zero.result], outputs=[empty.tensor], res=[lowered_type]
@@ -253,7 +237,35 @@ def _lower_matmul(ctx: Ctx, operation: ir.MatMul) -> None:
     ctx.values[operation.result.id] = lowered.results[0]
 
 
+@overload
+def _type(
+    value_type: ir.ScalarType,
+) -> builtin.AnyDenseElement: ...
+
+
+@overload
+def _type(
+    value_type: ir.TensorType,
+) -> (
+    builtin.TensorType[builtin.AnyDenseElement]
+    | builtin.UnrankedTensorType[builtin.AnyDenseElement]
+): ...
+
+
 def _type(value_type: ir.Type) -> Attribute:
+    if isinstance(value_type, ir.TensorType):
+        element_type = _scalar_type(value_type.element_type)
+        if value_type.shape is None:
+            return builtin.UnrankedTensorType(element_type)
+        dimensions = [
+            builtin.DYNAMIC_INDEX if dimension is None else dimension
+            for dimension in value_type.shape
+        ]
+        return builtin.TensorType(element_type, dimensions)
+    return _scalar_type(value_type)
+
+
+def _scalar_type(value_type: ir.ScalarType) -> builtin.AnyDenseElement:
     match value_type:
         case ir.ScalarType.BOOL:
             return builtin.i1
@@ -265,35 +277,23 @@ def _type(value_type: ir.Type) -> Attribute:
             return builtin.f32
         case ir.ScalarType.F64:
             return builtin.f64
-        case ir.TensorType(element_type, None):
-            return builtin.UnrankedTensorType(_type(element_type))
-        case ir.TensorType(element_type, shape):
-            assert shape is not None
-            dimensions = [
-                builtin.DYNAMIC_INDEX if dimension is None else dimension
-                for dimension in shape
-            ]
-            return builtin.TensorType(_type(element_type), dimensions)
 
 
 def _scalar_attribute(
     value: ir.Literal,
-    value_type: Attribute,
+    value_type: ir.ScalarType,
 ) -> builtin.IntegerAttr | builtin.FloatAttr:
-    if value_type == builtin.i1:
-        if not isinstance(value, bool):
-            raise TypeError("boolean constant must contain a bool")
-        return builtin.BoolAttr.from_bool(value)
-    if value_type in (builtin.i32, builtin.i64):
-        if isinstance(value, bool) or not isinstance(value, int):
-            raise TypeError("integer constant must contain an int")
-        assert isinstance(value_type, builtin.IntegerType)
-        return builtin.IntegerAttr(value, value_type)
-    if isinstance(value_type, (builtin.Float32Type, builtin.Float64Type)):
-        if not isinstance(value, float):
-            raise TypeError("floating-point constant must contain a float")
-        return builtin.FloatAttr(value, value_type)
-    raise TypeError("constant must have a scalar type")
+    match value_type:
+        case ir.ScalarType.BOOL:
+            return builtin.BoolAttr.from_bool(cast(bool, value))
+        case ir.ScalarType.I32:
+            return builtin.IntegerAttr(cast(int, value), builtin.i32)
+        case ir.ScalarType.I64:
+            return builtin.IntegerAttr(cast(int, value), builtin.i64)
+        case ir.ScalarType.F32:
+            return builtin.FloatAttr(cast(float, value), builtin.f32)
+        case ir.ScalarType.F64:
+            return builtin.FloatAttr(cast(float, value), builtin.f64)
 
 
 def _attributes(
@@ -325,10 +325,7 @@ def _attribute(value: ir.Attribute) -> Attribute:
 
 
 def _value(ctx: Ctx, value: ir.Value) -> SSAValue:
-    try:
-        return ctx.values[value.id]
-    except KeyError:
-        raise ValueError(f"Niro value {int(value.id)} is not defined") from None
+    return ctx.values[value.id]
 
 
 def _record_results(
@@ -336,8 +333,6 @@ def _record_results(
     niro_values: tuple[ir.Value, ...],
     mlir_values: tuple[SSAValue, ...],
 ) -> None:
-    if len(niro_values) != len(mlir_values):
-        raise ValueError("operation result count changed during MLIR lowering")
     ctx.values.update(
         (niro_value.id, mlir_value)
         for niro_value, mlir_value in zip(
@@ -352,30 +347,6 @@ def _element_type(value_type: ir.Type) -> ir.ScalarType:
     return value_type
 
 
-def _require_static_tensor(value_type: ir.Type, operation: str) -> ir.TensorType:
-    if not isinstance(value_type, ir.TensorType):
-        raise TypeError(f"{operation} requires a tensor")
+def _require_static_shape(value_type: ir.TensorType, operation: str) -> None:
     if value_type.shape is None or any(dim is None for dim in value_type.shape):
         raise NotImplementedError(f"{operation} requires a static ranked tensor")
-    return value_type
-
-
-def _require_matrix(value_type: ir.Type, operation: str) -> ir.TensorType:
-    tensor_type = _require_static_tensor(value_type, operation)
-    assert tensor_type.shape is not None
-    if len(tensor_type.shape) != 2:
-        raise TypeError(f"{operation} requires a rank-two tensor")
-    return tensor_type
-
-
-def _tensor_byte_size(value_type: ir.TensorType) -> int:
-    assert value_type.shape is not None
-    widths = {
-        ir.ScalarType.BOOL: 1,
-        ir.ScalarType.I32: 4,
-        ir.ScalarType.I64: 8,
-        ir.ScalarType.F32: 4,
-        ir.ScalarType.F64: 8,
-    }
-    shape = cast(tuple[int, ...], value_type.shape)
-    return math.prod(shape) * widths[value_type.element_type]

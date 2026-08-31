@@ -8,6 +8,7 @@ on these classes.
 from __future__ import annotations
 
 import enum
+import math
 from dataclasses import dataclass, field
 from typing import NewType
 
@@ -21,6 +22,16 @@ class ScalarType(enum.Enum):
     F32 = "f32"
     F64 = "f64"
 
+    @property
+    def byte_width(self) -> int:
+        return {
+            ScalarType.BOOL: 1,
+            ScalarType.I32: 4,
+            ScalarType.I64: 8,
+            ScalarType.F32: 4,
+            ScalarType.F64: 8,
+        }[self]
+
 
 # None represents an anonymous dynamic dimension.
 type Dimension = int | None
@@ -33,6 +44,14 @@ class TensorType:
     # None represents an unranked tensor; () represents a rank-zero tensor.
     shape: Shape | None
 
+    def __post_init__(self) -> None:
+        if self.shape is None:
+            return
+        shape = tuple(self.shape)
+        if any(dimension is not None and dimension < 0 for dimension in shape):
+            raise ValueError("tensor dimensions cannot be negative")
+        object.__setattr__(self, "shape", shape)
+
 
 type Type = ScalarType | TensorType
 
@@ -44,6 +63,10 @@ class Value:
     id: ValueId
     type: Type
 
+    def __post_init__(self) -> None:
+        if self.id < 0:
+            raise ValueError("value ID cannot be negative")
+
 
 type Attribute = None | bool | int | float | str | bytes | tuple[Attribute, ...]
 type Literal = bool | int | float | bytes
@@ -54,12 +77,45 @@ class Const:
     result: Value
     value: Literal
 
+    def __post_init__(self) -> None:
+        match self.result.type:
+            case ScalarType.BOOL if isinstance(self.value, bool):
+                pass
+            case ScalarType.I32 | ScalarType.I64 if (
+                isinstance(self.value, int) and not isinstance(self.value, bool)
+            ):
+                pass
+            case ScalarType.F32 | ScalarType.F64 if isinstance(self.value, float):
+                pass
+            case TensorType(element_type, shape) if (
+                isinstance(self.value, bytes)
+                and shape is not None
+                and all(dimension is not None for dimension in shape)
+            ):
+                size = math.prod(dimension for dimension in shape if dimension is not None)
+                expected = size * element_type.byte_width
+                if len(self.value) != expected:
+                    raise ValueError(
+                        f"tensor constant has {len(self.value)} bytes, expected {expected}"
+                    )
+            case TensorType():
+                raise TypeError(
+                    "tensor constant requires packed bytes and a static shape"
+                )
+            case _:
+                raise TypeError("constant value does not match its result type")
+
 
 @dataclass(frozen=True, slots=True)
 class Transpose:
     result: Value
     operand: Value
     permutation: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        expected = transpose_result_type(self.operand.type, self.permutation)
+        if self.result.type != expected:
+            raise TypeError("transpose result type does not match its operands")
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +124,9 @@ class Add:
     lhs: Value
     rhs: Value
 
+    def __post_init__(self) -> None:
+        _check_arithmetic_types("add", self.result, self.lhs, self.rhs)
+
 
 @dataclass(frozen=True, slots=True)
 class Mul:
@@ -75,12 +134,19 @@ class Mul:
     lhs: Value
     rhs: Value
 
+    def __post_init__(self) -> None:
+        _check_arithmetic_types("mul", self.result, self.lhs, self.rhs)
+
 
 @dataclass(frozen=True, slots=True)
 class MatMul:
     result: Value
     lhs: Value
     rhs: Value
+
+    def __post_init__(self) -> None:
+        if self.result.type != matmul_result_type(self.lhs.type, self.rhs.type):
+            raise TypeError("matmul result type does not match its operands")
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +184,10 @@ class UnknownOp:
     attributes: dict[str, Attribute] = field(default_factory=dict)
     regions: tuple[Region, ...] = ()
 
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("unknown operation name cannot be empty")
+
 
 type Op = (
     Const | Transpose | Add | Mul | MatMul | Call | Return | Yield | If | UnknownOp
@@ -149,6 +219,10 @@ class Function:
     body: Region | None = None
     attributes: dict[str, Attribute] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("function name cannot be empty")
+
     @property
     def arguments(self) -> tuple[Value, ...]:
         """Return the entry block arguments of a defined function."""
@@ -161,3 +235,46 @@ class Function:
 class Module:
     functions: list[Function] = field(default_factory=list)
     attributes: dict[str, Attribute] = field(default_factory=dict)
+
+
+def transpose_result_type(operand_type: Type, permutation: tuple[int, ...]) -> TensorType:
+    if not isinstance(operand_type, TensorType):
+        raise TypeError("transpose operand must be a tensor")
+    if operand_type.shape is None:
+        return operand_type
+    if sorted(permutation) != list(range(len(operand_type.shape))):
+        raise ValueError("transpose permutation must contain every dimension once")
+    return TensorType(
+        operand_type.element_type,
+        tuple(operand_type.shape[index] for index in permutation),
+    )
+
+
+def matmul_result_type(lhs: Type, rhs: Type) -> TensorType:
+    if not isinstance(lhs, TensorType) or not isinstance(rhs, TensorType):
+        raise TypeError("matmul operands must be tensors")
+    if lhs.shape is None or rhs.shape is None:
+        raise TypeError("matmul operands must be ranked tensors")
+    if len(lhs.shape) != 2 or len(rhs.shape) != 2:
+        raise TypeError("matmul operands must be rank-two tensors")
+    if lhs.element_type is not rhs.element_type:
+        raise TypeError("matmul operand element types must match")
+    lhs_inner, rhs_inner = lhs.shape[1], rhs.shape[0]
+    if lhs_inner is not None and rhs_inner is not None and lhs_inner != rhs_inner:
+        raise ValueError("matmul contracting dimensions must match")
+    return TensorType(lhs.element_type, (lhs.shape[0], rhs.shape[1]))
+
+
+def _check_arithmetic_types(
+    operation: str,
+    result: Value,
+    lhs: Value,
+    rhs: Value,
+) -> None:
+    if lhs.type != rhs.type or result.type != lhs.type:
+        raise TypeError(f"{operation} operands and result must have the same type")
+    element_type = (
+        lhs.type.element_type if isinstance(lhs.type, TensorType) else lhs.type
+    )
+    if element_type is ScalarType.BOOL:
+        raise TypeError(f"{operation} does not support boolean values")

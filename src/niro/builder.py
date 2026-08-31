@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import builtins
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Final
 
 from niro import ir
@@ -14,7 +14,7 @@ type CallTarget = FunctionBuilder | ir.Function | str
 
 
 class ModuleBuilder:
-    """Build a module and maintain its function symbol table.
+    """Construct a Niro module one function at a time.
 
     The resulting ir.Module is available as builder.ir.
     """
@@ -30,7 +30,6 @@ class ModuleBuilder:
         ret_types: Sequence[ir.Type] = (),
     ) -> FunctionBuilder:
         """Create a defined function with one empty entry block."""
-        self._require_unique_function_name(name)
         builder = FunctionBuilder(self, name, arg_types, ret_types)
         self._add_function(builder.function)
         return builder
@@ -42,7 +41,6 @@ class ModuleBuilder:
         ret_types: Sequence[ir.Type] = (),
     ) -> ir.Function:
         """Declare a function whose implementation is outside this module."""
-        self._require_unique_function_name(name)
         function = ir.Function(
             name,
             ir.FunctionType(tuple(arg_types), tuple(ret_types)),
@@ -76,13 +74,9 @@ class ModuleBuilder:
             )
         return resolved
 
-    def _require_unique_function_name(self, name: str) -> None:
-        if not name:
-            raise ValueError("function name cannot be empty")
-        if name in self._functions:
-            raise ValueError(f"duplicate function: {name!r}")
-
     def _add_function(self, function: ir.Function) -> None:
+        if function.name in self._functions:
+            raise ValueError(f"duplicate function: {function.name!r}")
         self.ir.functions.append(function)
         self._functions[function.name] = function
 
@@ -118,9 +112,10 @@ class FunctionBuilder:
         return self.function.arguments
 
     def constant(self, value: ir.Literal, result_type: ir.Type) -> ir.Value:
-        result = self._new_value(result_type)
-        self._append(ir.Const(result, value))
-        return result
+        return self._append_result(
+            result_type,
+            lambda result: ir.Const(result, value),
+        )
 
     def bool(self, value: builtins.bool) -> ir.Value:
         return self.constant(value, ir.ScalarType.BOOL)
@@ -139,62 +134,46 @@ class FunctionBuilder:
 
     def tensor(self, data: bytes, result_type: ir.TensorType) -> ir.Value:
         """Create a tensor constant from contiguous little-endian data."""
-        if not isinstance(data, bytes):
-            raise TypeError("tensor data must be bytes")
         return self.constant(data, result_type)
 
     def add(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-        self._require_same_type("add", lhs, rhs)
-        result = self._new_value(lhs.type)
-        self._append(ir.Add(result, lhs, rhs), operands=(lhs, rhs))
-        return result
+        return self._append_result(
+            lhs.type,
+            lambda result: ir.Add(result, lhs, rhs),
+            operands=(lhs, rhs),
+        )
 
     def mul(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-        self._require_same_type("mul", lhs, rhs)
-        result = self._new_value(lhs.type)
-        self._append(ir.Mul(result, lhs, rhs), operands=(lhs, rhs))
-        return result
+        return self._append_result(
+            lhs.type,
+            lambda result: ir.Mul(result, lhs, rhs),
+            operands=(lhs, rhs),
+        )
 
     def matmul(
         self,
         lhs: ir.Value,
         rhs: ir.Value,
-        result_type: ir.Type,
     ) -> ir.Value:
-        self._require_owned(lhs)
-        self._require_owned(rhs)
-        result = self._new_value(result_type)
-        self._append(ir.MatMul(result, lhs, rhs), operands=(lhs, rhs))
-        return result
+        result_type = ir.matmul_result_type(lhs.type, rhs.type)
+        return self._append_result(
+            result_type,
+            lambda result: ir.MatMul(result, lhs, rhs),
+            operands=(lhs, rhs),
+        )
 
     def transpose(
         self,
         operand: ir.Value,
         permutation: Sequence[int],
     ) -> ir.Value:
-        self._require_owned(operand)
         normalized = tuple(permutation)
-        match operand.type:
-            case ir.TensorType(_, None):
-                result_type = operand.type
-            case ir.TensorType(element_type, shape) if shape is not None:
-                if sorted(normalized) != list(range(len(shape))):
-                    raise ValueError(
-                        "transpose permutation must contain every dimension once"
-                    )
-                result_type = ir.TensorType(
-                    element_type,
-                    tuple(shape[index] for index in normalized),
-                )
-            case _:
-                raise TypeError("transpose operand must be a tensor")
-
-        result = self._new_value(result_type)
-        self._append(
-            ir.Transpose(result, operand, normalized),
+        result_type = ir.transpose_result_type(operand.type, normalized)
+        return self._append_result(
+            result_type,
+            lambda result: ir.Transpose(result, operand, normalized),
             operands=(operand,),
         )
-        return result
 
     def unknown(
         self,
@@ -204,12 +183,10 @@ class FunctionBuilder:
         attributes: Mapping[str, ir.Attribute] | None = None,
     ) -> tuple[ir.Value, ...]:
         """Create an operation whose semantics are not known to Niro."""
-        if not name:
-            raise ValueError("unknown operation name cannot be empty")
         normalized_operands = tuple(operands)
-        results = tuple(self._new_value(result_type) for result_type in result_types)
-        self._append(
-            ir.UnknownOp(
+        return self._append_results(
+            result_types,
+            lambda results: ir.UnknownOp(
                 name=name,
                 operands=normalized_operands,
                 results=results,
@@ -217,7 +194,6 @@ class FunctionBuilder:
             ),
             operands=normalized_operands,
         )
-        return results
 
     def call(
         self,
@@ -258,6 +234,38 @@ class FunctionBuilder:
         self._values.append(value)
         return value
 
+    def _append_result(
+        self,
+        result_type: ir.Type,
+        make_operation: Callable[[ir.Value], ir.Op],
+        operands: Sequence[ir.Value] = (),
+    ) -> ir.Value:
+        (result,) = self._append_results(
+            (result_type,),
+            lambda results: make_operation(results[0]),
+            operands,
+        )
+        return result
+
+    def _append_results(
+        self,
+        result_types: Sequence[ir.Type],
+        make_operation: Callable[[tuple[ir.Value, ...]], ir.Op],
+        operands: Sequence[ir.Value] = (),
+    ) -> tuple[ir.Value, ...]:
+        if self._is_terminated():
+            raise ValueError("cannot add an operation after return")
+        for operand in operands:
+            self._require_owned(operand)
+        results = tuple(
+            ir.Value(ir.ValueId(len(self._values) + index), result_type)
+            for index, result_type in enumerate(result_types)
+        )
+        operation = make_operation(results)
+        self._values.extend(results)
+        self._block.operations.append(operation)
+        return results
+
     def _append(self, operation: ir.Op, operands: Sequence[ir.Value] = ()) -> None:
         if self._is_terminated():
             raise ValueError("cannot add an operation after return")
@@ -280,17 +288,6 @@ class FunctionBuilder:
             raise ValueError("value does not belong to this function")
         if self._values[index] is not value:
             raise ValueError("value does not belong to this function")
-
-    def _require_same_type(
-        self,
-        operation: str,
-        lhs: ir.Value,
-        rhs: ir.Value,
-    ) -> None:
-        self._require_owned(lhs)
-        self._require_owned(rhs)
-        if lhs.type != rhs.type:
-            raise TypeError(f"{operation} operands must have the same type")
 
     def _require_signature(
         self,

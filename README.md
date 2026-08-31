@@ -25,6 +25,8 @@ compromising correctness or output quality. When contributing:
   speculative abstractions.
 - Use type hints throughout Python code.
 - Keep the core IR independent of any single frontend or backend.
+- Establish invariants at construction time, derive redundant information, and
+  let downstream code trust constructed values.
 - Add tests for meaningful behavior and invariants.
 - Keep documentation concise, and introduce concepts before relying on them.
 - Write code and prose with care for the people who will read them next.

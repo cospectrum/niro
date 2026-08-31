@@ -118,11 +118,7 @@ def _import_node(
             _record_output(
                 ctx,
                 node,
-                ctx.function.matmul(
-                    lhs,
-                    rhs,
-                    _lookup_type(ctx.types, node.output[0]),
-                ),
+                ctx.function.matmul(lhs, rhs),
             )
         case "Transpose":
             if len(operands) != 1:

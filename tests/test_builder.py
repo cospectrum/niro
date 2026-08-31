@@ -73,7 +73,7 @@ def test_tensor_constant_requires_bytes() -> None:
         ir.Const(result=value, value=b"\x00\x00\x00@\x00\x00@@")
     ]
 
-    with pytest.raises(TypeError, match="tensor data must be bytes"):
+    with pytest.raises(TypeError, match="requires packed bytes"):
         function.tensor(
             data=cast(bytes, (2.0, 3.0)),
             result_type=tensor_type,
@@ -104,3 +104,27 @@ def test_builds_unknown_operation() -> None:
         results=(result,),
         attributes={"alpha": 1.0},
     )
+
+
+def test_failed_operation_does_not_allocate_a_value() -> None:
+    function = ModuleBuilder().func(name="main")
+    tensor_type = ir.TensorType(element_type=ir.ScalarType.F32, shape=(2,))
+
+    with pytest.raises(ValueError, match="expected 8"):
+        function.tensor(data=bytes(4), result_type=tensor_type)
+
+    assert function.i32(1).id == ir.ValueId(0)
+
+
+def test_matmul_derives_its_result_type() -> None:
+    function = ModuleBuilder().func(
+        name="main",
+        arg_types=[
+            ir.TensorType(ir.ScalarType.F32, (2, 3)),
+            ir.TensorType(ir.ScalarType.F32, (3, 4)),
+        ],
+    )
+
+    result = function.matmul(function.args[0], function.args[1])
+
+    assert result.type == ir.TensorType(ir.ScalarType.F32, (2, 4))

@@ -45,7 +45,7 @@ def test_lowers_tensor_weight_to_private_immutable_global() -> None:
         ret_types=[tensor_type],
     )
     weight = function.tensor(data=data, result_type=tensor_type)
-    result = function.matmul(function.args[0], weight, tensor_type)
+    result = function.matmul(function.args[0], weight)
     function.return_(result)
     module.entry_point(function)
 
@@ -191,13 +191,12 @@ def test_rejects_dynamic_matmul() -> None:
     result = function.matmul(
         function.args[0],
         function.args[1],
-        tensor_type,
     )
     function.return_(result)
     module.entry_point(function)
 
     with pytest.raises(
         NotImplementedError,
-        match="matmul lhs requires a static ranked tensor",
+        match="matmul requires a static ranked tensor",
     ):
         lower_to_mlir(module.ir)

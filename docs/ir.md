@@ -209,7 +209,9 @@ constant = Const(result=result, value=2.0)
 ```
 
 Here, `2.0` is the literal stored in the IR. `result` is the `F32` value used by
-later operations. The verifier checks that the literal matches the result type.
+later operations. A constant's literal must match its result type. A tensor
+constant has a static shape and exactly the number of packed bytes implied by
+its shape and element type.
 
 ### Arithmetic operations
 
@@ -221,8 +223,8 @@ result = Value(ValueId(2), ScalarType.F32)
 add = Add(result=result, lhs=left, rhs=right)
 ```
 
-Type compatibility, broadcasting, and result-shape rules are part of Niro's
-semantics and will be enforced by the verifier.
+Arithmetic operands and results have compatible types. `MatMul` operates on
+compatible rank-two tensors; its result shape follows from the operand shapes.
 
 ### `Transpose`
 
@@ -332,12 +334,13 @@ add = Function(
 module = Module(functions=[add])
 ```
 
-## Verification
+## Well-formed IR
 
-- function names and value IDs are unique in their scopes;
-- tensor dimensions are valid;
-- function inputs and returns match their signatures;
-- operands refer to visible definitions and obey SSA dominance;
-- operation types and shapes are compatible;
-- calls resolve and match their function signatures;
-- regions have valid terminators and do not leak local values.
+A Niro module has unique function names. Within each function, value IDs are
+unique, operands refer to visible definitions, and uses obey SSA dominance.
+
+Tensor dimensions are non-negative. Function inputs and returns match their
+signatures. Operation operands and results have compatible types and shapes,
+and calls name functions with matching signatures. Every region ends with the
+terminator required by its containing operation, and values defined inside a
+region are not visible outside it.
