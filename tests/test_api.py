@@ -22,6 +22,18 @@ def test_ir_exports_operations() -> None:
     )
 
 
+def test_ir_exports_program() -> None:
+    from niro import ir
+
+    _ = (
+        ir.Block,
+        ir.Function,
+        ir.FunctionType,
+        ir.Module,
+        ir.Region,
+    )
+
+
 def test_exports_import_onnx() -> None:
     import niro
     from niro import import_onnx
