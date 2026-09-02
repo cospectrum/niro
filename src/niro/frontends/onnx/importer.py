@@ -9,6 +9,7 @@ from onnx import numpy_helper
 
 from niro import ir
 from niro.builder import BlockBuilder, ModuleBuilder
+from niro.frontends.onnx.op_type import OnnxOpType
 
 type OnnxValueName = str
 
@@ -81,28 +82,28 @@ def _import_node(
         return
 
     match node.op_type:
-        case "Add":
+        case OnnxOpType.Add:
             lhs, rhs = _require_two_inputs(node, operands)
             _record_output(
                 ctx,
                 node,
                 ctx.block.add(lhs, rhs),
             )
-        case "Mul":
+        case OnnxOpType.Mul:
             lhs, rhs = _require_two_inputs(node, operands)
             _record_output(
                 ctx,
                 node,
                 ctx.block.mul(lhs, rhs),
             )
-        case "MatMul":
+        case OnnxOpType.MatMul:
             lhs, rhs = _require_two_inputs(node, operands)
             _record_output(
                 ctx,
                 node,
                 ctx.block.matmul(lhs, rhs),
             )
-        case "Transpose":
+        case OnnxOpType.Transpose:
             if len(operands) != 1:
                 raise ValueError("Transpose must have exactly one input")
             attributes = {attribute.name: attribute for attribute in node.attribute}
@@ -131,7 +132,7 @@ def _import_unknown_node(
             f"optional outputs are not supported for {node.op_type}"
         )
     results = ctx.block.unknown(
-        name=_operation_name(node),
+        name=operation_name(node),
         operands=operands,
         result_types=[_lookup_type(ctx.types, name) for name in node.output],
         attributes={
@@ -213,7 +214,8 @@ def _initializer_data(initializer: onnx.TensorProto) -> bytes:
     return array.astype(little_endian_dtype, copy=False).tobytes(order="C")
 
 
-def _operation_name(node: onnx.NodeProto) -> str:
+def operation_name(node: onnx.NodeProto) -> str:
+    """Return the normalized Niro name for an ONNX node operation."""
     domain = "onnx" if node.domain in ("", "ai.onnx") else node.domain
     return f"{domain}.{node.op_type}"
 

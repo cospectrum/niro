@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from niro.ir.program import Region
 
 
-class OpMixin:
+class _OpMixin:
     """Common, immutable queries supported by every operation."""
 
     def get_operands(self) -> tuple[Value, ...]:
@@ -26,7 +26,7 @@ class OpMixin:
 
 
 @dataclass(frozen=True, slots=True)
-class Const(OpMixin):
+class Const(_OpMixin):
     id: OpId
     result: Value
     literal: Literal
@@ -36,7 +36,7 @@ class Const(OpMixin):
 
 
 @dataclass(frozen=True, slots=True)
-class Transpose(OpMixin):
+class Transpose(_OpMixin):
     id: OpId
     result: Value
     operand: Value
@@ -47,7 +47,7 @@ class Transpose(OpMixin):
 
 
 @dataclass(frozen=True, slots=True)
-class Add(OpMixin):
+class Add(_OpMixin):
     id: OpId
     result: Value
     lhs: Value
@@ -58,7 +58,7 @@ class Add(OpMixin):
 
 
 @dataclass(frozen=True, slots=True)
-class Mul(OpMixin):
+class Mul(_OpMixin):
     id: OpId
     result: Value
     lhs: Value
@@ -69,7 +69,7 @@ class Mul(OpMixin):
 
 
 @dataclass(frozen=True, slots=True)
-class MatMul(OpMixin):
+class MatMul(_OpMixin):
     id: OpId
     result: Value
     lhs: Value
@@ -80,7 +80,7 @@ class MatMul(OpMixin):
 
 
 @dataclass(frozen=True, slots=True)
-class Call(OpMixin):
+class Call(_OpMixin):
     id: OpId
     callee: str
     arguments: tuple[Value, ...]
@@ -91,7 +91,7 @@ class Call(OpMixin):
 
 
 @dataclass(frozen=True, slots=True)
-class Return(OpMixin):
+class Return(_OpMixin):
     id: OpId
     operands: tuple[Value, ...] = ()
 
@@ -100,7 +100,7 @@ class Return(OpMixin):
 
 
 @dataclass(frozen=True, slots=True)
-class Yield(OpMixin):
+class Yield(_OpMixin):
     id: OpId
     operands: tuple[Value, ...] = ()
 
@@ -109,7 +109,7 @@ class Yield(OpMixin):
 
 
 @dataclass(frozen=True, slots=True)
-class If(OpMixin):
+class If(_OpMixin):
     id: OpId
     results: tuple[Value, ...]
     condition: Value
@@ -123,7 +123,7 @@ class If(OpMixin):
 
 
 @dataclass(frozen=True, slots=True)
-class UnknownOp(OpMixin):
+class UnknownOp(_OpMixin):
     """A structurally valid operation whose semantics are unknown to niro."""
 
     id: OpId
