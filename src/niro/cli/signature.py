@@ -11,7 +11,7 @@ from google.protobuf.message import DecodeError
 from niro import ir
 from niro.builder import get_entry_point
 from niro.cli.input import InputFormat, load_model, resolve_input_format
-from niro.frontends.onnx import import_onnx
+from niro.onnx import import_onnx
 
 LINE_WIDTH = 100
 

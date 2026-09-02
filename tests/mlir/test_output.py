@@ -3,7 +3,7 @@ from io import StringIO
 
 from xdsl.dialects import builtin
 
-from niro.backends.mlir import format_mlir, write_mlir
+from niro.mlir import format_mlir, write_mlir
 
 
 def test_formats_mlir_as_text() -> None:

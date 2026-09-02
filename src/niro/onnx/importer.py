@@ -1,4 +1,4 @@
-"""ONNX frontend for Niro IR."""
+"""Import ONNX models into Niro IR."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from onnx import numpy_helper
 
 from niro import ir
 from niro.builder import BlockBuilder, ModuleBuilder
-from niro.frontends.onnx.op_type import OnnxOpType
+from niro.onnx.op_type import OnnxOpType
 
 type OnnxValueName = str
 

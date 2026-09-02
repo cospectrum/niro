@@ -8,7 +8,7 @@ import pytest
 from onnx import TensorProto, helper
 
 from niro import ir
-from niro.frontends.onnx import OnnxOpType, import_onnx, operation_name
+from niro.onnx import OnnxOpType, import_onnx, operation_name
 
 
 def tensor(

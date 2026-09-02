@@ -1,6 +1,6 @@
 import onnx
 
-from niro.frontends.onnx import OnnxOpType
+from niro.onnx import OnnxOpType
 
 
 def test_matches_latest_onnx_schema_registry() -> None:

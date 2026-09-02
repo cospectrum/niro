@@ -2,8 +2,8 @@ import pytest
 from xdsl.dialects import builtin, ml_program
 
 from niro import ir
-from niro.backends.mlir import format_mlir, lower_to_mlir
 from niro.builder import ModuleBuilder
+from niro.mlir import format_mlir, lower_to_mlir
 
 
 def test_lowers_public_entry_point_and_tensor_add() -> None:

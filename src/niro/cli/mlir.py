@@ -9,9 +9,9 @@ from typing import Annotated
 import typer
 from google.protobuf.message import DecodeError
 
-from niro.backends.mlir import lower_to_mlir, write_mlir
 from niro.cli.input import InputFormat, load_model, resolve_input_format
-from niro.frontends.onnx import import_onnx
+from niro.mlir import lower_to_mlir, write_mlir
+from niro.onnx import import_onnx
 
 
 def emit_mlir(
