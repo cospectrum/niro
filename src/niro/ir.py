@@ -12,6 +12,8 @@ import math
 from dataclasses import dataclass, field
 from typing import NewType
 
+FuncId = NewType("FuncId", int)
+OpId = NewType("OpId", int)
 ValueId = NewType("ValueId", int)
 
 
@@ -68,6 +70,7 @@ type Literal = bool | int | float | bytes
 
 @dataclass(frozen=True, slots=True)
 class Const:
+    id: OpId
     result: Value
     value: Literal
 
@@ -77,6 +80,7 @@ class Const:
 
 @dataclass(frozen=True, slots=True)
 class Transpose:
+    id: OpId
     result: Value
     operand: Value
     permutation: tuple[int, ...]
@@ -87,6 +91,7 @@ class Transpose:
 
 @dataclass(frozen=True, slots=True)
 class Add:
+    id: OpId
     result: Value
     lhs: Value
     rhs: Value
@@ -97,6 +102,7 @@ class Add:
 
 @dataclass(frozen=True, slots=True)
 class Mul:
+    id: OpId
     result: Value
     lhs: Value
     rhs: Value
@@ -107,6 +113,7 @@ class Mul:
 
 @dataclass(frozen=True, slots=True)
 class MatMul:
+    id: OpId
     result: Value
     lhs: Value
     rhs: Value
@@ -117,23 +124,36 @@ class MatMul:
 
 @dataclass(frozen=True, slots=True)
 class Call:
+    id: OpId
     callee: str
     arguments: tuple[Value, ...]
     results: tuple[Value, ...]
 
+    def __post_init__(self) -> None:
+        validate_call(self)
+
 
 @dataclass(frozen=True, slots=True)
 class Return:
+    id: OpId
     operands: tuple[Value, ...] = ()
+
+    def __post_init__(self) -> None:
+        validate_return(self)
 
 
 @dataclass(frozen=True, slots=True)
 class Yield:
+    id: OpId
     operands: tuple[Value, ...] = ()
+
+    def __post_init__(self) -> None:
+        validate_yield(self)
 
 
 @dataclass(frozen=True, slots=True)
 class If:
+    id: OpId
     results: tuple[Value, ...]
     condition: Value
     then_region: Region
@@ -147,6 +167,7 @@ class If:
 class UnknownOp:
     """A structurally valid operation whose semantics are unknown to niro."""
 
+    id: OpId
     name: str
     operands: tuple[Value, ...]
     results: tuple[Value, ...]
@@ -181,6 +202,7 @@ class FunctionType:
 
 @dataclass(slots=True)
 class Function:
+    id: FuncId
     name: str
     type: FunctionType
     # None denotes an external declaration.
@@ -247,6 +269,7 @@ def validate_value(value: Value) -> None:
 
 
 def validate_const(op: Const) -> None:
+    _validate_op_id(op.id)
     match op.result.type:
         case ScalarType.BOOL if isinstance(op.value, bool):
             pass
@@ -274,37 +297,62 @@ def validate_const(op: Const) -> None:
 
 
 def validate_transpose(op: Transpose) -> None:
+    _validate_op_id(op.id)
     expected = transpose_result_type(op.operand.type, op.permutation)
     if op.result.type != expected:
         raise TypeError("transpose result type does not match its operands")
 
 
 def validate_add(op: Add) -> None:
+    _validate_op_id(op.id)
     _require_matching_numeric_types("add", op.result, op.lhs, op.rhs)
 
 
 def validate_mul(op: Mul) -> None:
+    _validate_op_id(op.id)
     _require_matching_numeric_types("mul", op.result, op.lhs, op.rhs)
 
 
 def validate_matmul(op: MatMul) -> None:
+    _validate_op_id(op.id)
     if op.result.type != matmul_result_type(op.lhs.type, op.rhs.type):
         raise TypeError("matmul result type does not match its operands")
 
 
+def validate_call(op: Call) -> None:
+    _validate_op_id(op.id)
+
+
+def validate_return(op: Return) -> None:
+    _validate_op_id(op.id)
+
+
+def validate_yield(op: Yield) -> None:
+    _validate_op_id(op.id)
+
+
 def validate_if(op: If) -> None:
+    _validate_op_id(op.id)
     if op.condition.type is not ScalarType.BOOL:
         raise TypeError("if condition must be boolean")
 
 
 def validate_unknown_op(op: UnknownOp) -> None:
+    _validate_op_id(op.id)
     if not op.name:
         raise ValueError("unknown operation name cannot be empty")
 
 
 def validate_function(function: Function) -> None:
+    if function.id < 0:
+        raise ValueError("function ID cannot be negative")
     if not function.name:
         raise ValueError("function name cannot be empty")
+
+
+def _validate_op_id(op_id: OpId) -> None:
+    if op_id < 0:
+        raise ValueError("operation ID cannot be negative")
 
 
 def _require_matching_numeric_types(

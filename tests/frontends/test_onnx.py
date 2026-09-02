@@ -86,6 +86,7 @@ def test_imports_initializer_as_tensor_constant() -> None:
     assert isinstance(multiply, ir.Mul)
     assert isinstance(return_, ir.Return)
     assert constant == ir.Const(
+        id=ir.OpId(0),
         result=ir.Value(
             id=ir.ValueId(1),
             type=ir.TensorType(element_type=ir.ScalarType.F32, shape=(2,)),

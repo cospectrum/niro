@@ -40,8 +40,9 @@ class ModuleBuilder:
     ) -> ir.Function:
         """Declare a function whose implementation is outside this module."""
         function = ir.Function(
-            name,
-            ir.FunctionType(tuple(arg_types), tuple(ret_types)),
+            id=ir.FuncId(len(self.ir.functions)),
+            name=name,
+            type=ir.FunctionType(tuple(arg_types), tuple(ret_types)),
         )
         self._register_function(function)
         return function
@@ -94,12 +95,14 @@ class FunctionBuilder:
         ret_types: Sequence[ir.Type],
     ) -> None:
         self._module = module
+        self._operations: list[ir.Op] = []
         self._values: list[ir.Value] = []
         region = ir.Region()
         self.function = ir.Function(
-            name,
-            ir.FunctionType(tuple(arg_types), tuple(ret_types)),
-            region,
+            id=ir.FuncId(len(module.ir.functions)),
+            name=name,
+            type=ir.FunctionType(tuple(arg_types), tuple(ret_types)),
+            body=region,
         )
         self.body = RegionBuilder(self, region)
         self.entry = self.body.block(arg_types)
@@ -119,8 +122,14 @@ class FunctionBuilder:
             for index, value_type in enumerate(value_types)
         )
 
+    def _new_op_id(self) -> ir.OpId:
+        return ir.OpId(len(self._operations))
+
     def _commit_values(self, values: Sequence[ir.Value]) -> None:
         self._values.extend(values)
+
+    def _commit_operation(self, operation: ir.Op) -> None:
+        self._operations.append(operation)
 
     def _validate_owned_value(self, value: ir.Value) -> None:
         index = int(value.id)
@@ -198,7 +207,7 @@ class BlockBuilder:
     def constant(self, value: ir.Literal, result_type: ir.Type) -> ir.Value:
         return self._append_result(
             result_type,
-            lambda result: ir.Const(result, value),
+            lambda op_id, result: ir.Const(id=op_id, result=result, value=value),
         )
 
     def bool(self, value: builtins.bool) -> ir.Value:
@@ -223,14 +232,14 @@ class BlockBuilder:
     def add(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
         return self._append_result(
             lhs.type,
-            lambda result: ir.Add(result, lhs, rhs),
+            lambda op_id, result: ir.Add(id=op_id, result=result, lhs=lhs, rhs=rhs),
             operands=(lhs, rhs),
         )
 
     def mul(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
         return self._append_result(
             lhs.type,
-            lambda result: ir.Mul(result, lhs, rhs),
+            lambda op_id, result: ir.Mul(id=op_id, result=result, lhs=lhs, rhs=rhs),
             operands=(lhs, rhs),
         )
 
@@ -242,7 +251,7 @@ class BlockBuilder:
         result_type = ir.matmul_result_type(lhs.type, rhs.type)
         return self._append_result(
             result_type,
-            lambda result: ir.MatMul(result, lhs, rhs),
+            lambda op_id, result: ir.MatMul(id=op_id, result=result, lhs=lhs, rhs=rhs),
             operands=(lhs, rhs),
         )
 
@@ -255,7 +264,12 @@ class BlockBuilder:
         result_type = ir.transpose_result_type(operand.type, normalized)
         return self._append_result(
             result_type,
-            lambda result: ir.Transpose(result, operand, normalized),
+            lambda op_id, result: ir.Transpose(
+                id=op_id,
+                result=result,
+                operand=operand,
+                permutation=normalized,
+            ),
             operands=(operand,),
         )
 
@@ -270,7 +284,8 @@ class BlockBuilder:
         normalized_operands = tuple(operands)
         return self._append_results(
             result_types,
-            lambda results: ir.UnknownOp(
+            lambda op_id, results: ir.UnknownOp(
+                id=op_id,
                 name=name,
                 operands=normalized_operands,
                 results=results,
@@ -289,7 +304,8 @@ class BlockBuilder:
         else_region = self._function.region()
         self._append_results(
             result_types,
-            lambda values: ir.If(
+            lambda op_id, values: ir.If(
+                id=op_id,
                 results=values,
                 condition=condition,
                 then_region=then_region.region,
@@ -314,7 +330,12 @@ class BlockBuilder:
         self._function._validate_call_signature(target, normalized)
         results = self._append_results(
             target.type.outputs,
-            lambda values: ir.Call(target.name, normalized, values),
+            lambda op_id, values: ir.Call(
+                id=op_id,
+                callee=target.name,
+                arguments=normalized,
+                results=values,
+            ),
             operands=normalized,
         )
         if not results:
@@ -328,20 +349,26 @@ class BlockBuilder:
         actual = tuple(value.type for value in operands)
         if actual != expected:
             raise TypeError(f"return types {actual!r} do not match {expected!r}")
-        self._append_operation(ir.Return(operands), operands=operands)
+        self._append_operation(
+            lambda op_id: ir.Return(id=op_id, operands=operands),
+            operands=operands,
+        )
 
     def yield_(self, *operands: ir.Value) -> None:
-        self._append_operation(ir.Yield(operands), operands=operands)
+        self._append_operation(
+            lambda op_id: ir.Yield(id=op_id, operands=operands),
+            operands=operands,
+        )
 
     def _append_result(
         self,
         result_type: ir.Type,
-        make_operation: Callable[[ir.Value], ir.Op],
+        make_operation: Callable[[ir.OpId, ir.Value], ir.Op],
         operands: Sequence[ir.Value] = (),
     ) -> ir.Value:
         (result,) = self._append_results(
             (result_type,),
-            lambda results: make_operation(results[0]),
+            lambda op_id, results: make_operation(op_id, results[0]),
             operands,
         )
         return result
@@ -349,7 +376,7 @@ class BlockBuilder:
     def _append_results(
         self,
         result_types: Sequence[ir.Type],
-        make_operation: Callable[[tuple[ir.Value, ...]], ir.Op],
+        make_operation: Callable[[ir.OpId, tuple[ir.Value, ...]], ir.Op],
         operands: Sequence[ir.Value] = (),
     ) -> tuple[ir.Value, ...]:
         if self._has_terminator():
@@ -357,20 +384,23 @@ class BlockBuilder:
         for operand in operands:
             self._validate_owned_value(operand)
         results = self._function._new_values(result_types)
-        operation = make_operation(results)
+        operation = make_operation(self._function._new_op_id(), results)
         self._function._commit_values(results)
+        self._function._commit_operation(operation)
         self.block.operations.append(operation)
         return results
 
     def _append_operation(
         self,
-        operation: ir.Op,
+        make_operation: Callable[[ir.OpId], ir.Op],
         operands: Sequence[ir.Value] = (),
     ) -> None:
         if self._has_terminator():
             raise ValueError("cannot add an operation after a block terminator")
         for operand in operands:
             self._validate_owned_value(operand)
+        operation = make_operation(self._function._new_op_id())
+        self._function._commit_operation(operation)
         self.block.operations.append(operation)
 
     def _has_terminator(self) -> builtins.bool:

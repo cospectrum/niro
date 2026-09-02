@@ -48,6 +48,7 @@ def test_rejects_duplicate_function_during_builder_construction() -> None:
         module.func("main")
 
     assert [function.name for function in module.ir.functions] == ["main"]
+    assert module.func("next").function.id == ir.FuncId(1)
 
 
 def test_rejects_values_from_another_function() -> None:
@@ -80,7 +81,7 @@ def test_tensor_constant_requires_bytes() -> None:
     assert value.type == tensor_type
     assert function.function.body is not None
     assert function.function.body.blocks[0].operations == [
-        ir.Const(result=value, value=b"\x00\x00\x00@\x00\x00@@")
+        ir.Const(id=ir.OpId(0), result=value, value=b"\x00\x00\x00@\x00\x00@@")
     ]
 
     with pytest.raises(TypeError, match="requires packed bytes"):
@@ -109,6 +110,7 @@ def test_builds_unknown_operation() -> None:
     assert function.function.body is not None
     operation = function.function.body.blocks[0].operations[0]
     assert operation == ir.UnknownOp(
+        id=ir.OpId(0),
         name="onnx.Relu",
         operands=function.args,
         results=(result,),
@@ -181,10 +183,51 @@ def test_builds_if_regions_and_preserves_result_order() -> None:
     assert conditional.operation.then_region is conditional.then_region.region
     assert conditional.operation.else_region is conditional.else_region.region
     assert function.entry.block.operations == [
-        ir.Const(condition, True),
+        ir.Const(id=ir.OpId(0), result=condition, value=True),
         conditional.operation,
-        ir.Return(conditional.results),
+        ir.Return(id=ir.OpId(8), operands=conditional.results),
     ]
+
+
+def test_allocates_function_ids_within_module() -> None:
+    module = ModuleBuilder()
+
+    first = module.func("first")
+    external = module.extern("external")
+    second = module.func("second")
+
+    assert first.function.id == ir.FuncId(0)
+    assert external.id == ir.FuncId(1)
+    assert second.function.id == ir.FuncId(2)
+
+
+def test_allocates_operation_ids_across_nested_regions() -> None:
+    function = ModuleBuilder().func("main")
+    condition = function.entry.bool(True)
+    conditional = function.entry.if_(condition)
+    conditional.then_region.block().yield_()
+    conditional.else_region.block().yield_()
+    function.entry.return_()
+
+    assert function.function.body is not None
+    assert [op.id for op in function.function.body.blocks[0].operations] == [
+        ir.OpId(0),
+        ir.OpId(1),
+        ir.OpId(4),
+    ]
+    assert conditional.then_region.region.blocks[0].operations[0].id == ir.OpId(2)
+    assert conditional.else_region.region.blocks[0].operations[0].id == ir.OpId(3)
+
+
+def test_failed_operation_does_not_allocate_an_operation_id() -> None:
+    function = ModuleBuilder().func("main")
+    tensor_type = ir.TensorType(ir.ScalarType.F32, (2,))
+
+    with pytest.raises(ValueError, match="expected 8"):
+        function.entry.tensor(data=bytes(4), result_type=tensor_type)
+
+    function.entry.i32(1)
+    assert function.entry.block.operations[0].id == ir.OpId(0)
 
 
 def test_if_requires_boolean_condition_without_allocating_results() -> None:

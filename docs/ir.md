@@ -61,6 +61,17 @@ including its nested regions. Different functions may reuse the same IDs.
 Function inputs, block inputs, and operation results share the same
 function-level ID namespace.
 
+### `FuncId` and `OpId`
+
+`FuncId` identifies a function and is unique within its module. `OpId`
+identifies an operation and is unique within its entire function, including
+nested regions. Different modules may reuse function IDs, and different
+functions may reuse operation IDs.
+
+Function names remain the public symbols used for calls and linking; a
+function ID is its internal identity. Function, operation, and value IDs are
+non-negative.
+
 ### `Value`
 
 A `Value` is an immutable reference containing an ID and type:
@@ -133,6 +144,7 @@ A function has a name, signature, and optional body:
 
 ```python
 external = Function(
+    id=FuncId(0),
     name="print_f32",
     type=FunctionType(inputs=(ScalarType.F32,), outputs=()),
     body=None,
@@ -205,7 +217,7 @@ supporting its validity rules and lowering behavior.
 
 ```python
 result = Value(ValueId(0), ScalarType.F32)
-constant = Const(result=result, value=2.0)
+constant = Const(id=OpId(0), result=result, value=2.0)
 ```
 
 Here, `2.0` is the literal stored in the IR. `result` is the `F32` value used by
@@ -220,7 +232,7 @@ matrix multiplication. Each consumes two operands and produces one result:
 
 ```python
 result = Value(ValueId(2), ScalarType.F32)
-add = Add(result=result, lhs=left, rhs=right)
+add = Add(id=OpId(0), result=result, lhs=left, rhs=right)
 ```
 
 Arithmetic operands and results have compatible types. `MatMul` operates on
@@ -232,6 +244,7 @@ compatible rank-two tensors; its result shape follows from the operand shapes.
 
 ```python
 transpose = Transpose(
+    id=OpId(0),
     result=result,
     operand=input_value,
     permutation=(1, 0),
@@ -245,7 +258,12 @@ The permutation lists the input dimension used for each result dimension.
 `Call` invokes a function by name:
 
 ```python
-function_call = Call(callee="add", arguments=(lhs, rhs), results=(result,))
+function_call = Call(
+    id=OpId(0),
+    callee="add",
+    arguments=(lhs, rhs),
+    results=(result,),
+)
 ```
 
 A call may have any number of arguments and results, including zero. The callee
@@ -256,7 +274,7 @@ may be a definition or external declaration in the same module.
 `Return` terminates a function and returns zero or more values:
 
 ```python
-return_op = Return((result,))
+return_op = Return(id=OpId(0), operands=(result,))
 ```
 
 The returned values must match the function's output types.
@@ -267,7 +285,7 @@ The returned values must match the function's output types.
 the region. Unlike `Return`, it does not return from the function:
 
 ```python
-yield_op = Yield((result,))
+yield_op = Yield(id=OpId(0), operands=(result,))
 ```
 
 ### `If`
@@ -277,10 +295,15 @@ regions end with `Yield`, and those yielded values become the `If` results:
 
 ```python
 if_op = If(
+    id=OpId(0),
     results=(result,),
     condition=condition,
-    then_region=Region(blocks=[Block(operations=[Yield((then_value,))])]),
-    else_region=Region(blocks=[Block(operations=[Yield((else_value,))])]),
+    then_region=Region(
+        blocks=[Block(operations=[Yield(id=OpId(1), operands=(then_value,))])]
+    ),
+    else_region=Region(
+        blocks=[Block(operations=[Yield(id=OpId(2), operands=(else_value,))])]
+    ),
 )
 ```
 
@@ -294,6 +317,7 @@ used outside directly.
 
 ```python
 unknown = UnknownOp(
+    id=OpId(0),
     name="onnx.LeakyRelu",
     operands=(input_value,),
     results=(result,),
@@ -317,12 +341,13 @@ result = Value(ValueId(2), ScalarType.F32)
 entry = Block(
     arguments=(lhs, rhs),
     operations=[
-        Add(result=result, lhs=lhs, rhs=rhs),
-        Return((result,)),
+        Add(id=OpId(0), result=result, lhs=lhs, rhs=rhs),
+        Return(id=OpId(1), operands=(result,)),
     ],
 )
 
 add = Function(
+    id=FuncId(0),
     name="add",
     type=FunctionType(
         inputs=(ScalarType.F32, ScalarType.F32),
@@ -336,8 +361,9 @@ module = Module(functions=[add])
 
 ## Well-formed IR
 
-A Niro module has unique function names. Within each function, value IDs are
-unique, operands refer to visible definitions, and uses obey SSA dominance.
+A Niro module has unique function names and function IDs. Within each function,
+operation IDs and value IDs are unique, operands refer to visible definitions,
+and uses obey SSA dominance.
 
 Tensor dimensions are non-negative. Function inputs and returns match their
 signatures. Operation operands and results have compatible types and shapes,
