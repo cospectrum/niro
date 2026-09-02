@@ -81,7 +81,11 @@ def test_tensor_constant_requires_bytes() -> None:
     assert value.type == tensor_type
     assert function.function.body is not None
     assert function.function.body.blocks[0].operations == [
-        ir.Const(id=ir.OpId(0), result=value, value=b"\x00\x00\x00@\x00\x00@@")
+        ir.Const(
+            id=ir.OpId(0),
+            result=value,
+            literal=b"\x00\x00\x00@\x00\x00@@",
+        )
     ]
 
     with pytest.raises(TypeError, match="requires packed bytes"):
@@ -183,7 +187,7 @@ def test_builds_if_regions_and_preserves_result_order() -> None:
     assert conditional.operation.then_region is conditional.then_region.region
     assert conditional.operation.else_region is conditional.else_region.region
     assert function.entry.block.operations == [
-        ir.Const(id=ir.OpId(0), result=condition, value=True),
+        ir.Const(id=ir.OpId(0), result=condition, literal=True),
         conditional.operation,
         ir.Return(id=ir.OpId(8), operands=conditional.results),
     ]

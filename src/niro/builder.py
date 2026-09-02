@@ -207,7 +207,7 @@ class BlockBuilder:
     def constant(self, value: ir.Literal, result_type: ir.Type) -> ir.Value:
         return self._append_result(
             result_type,
-            lambda op_id, result: ir.Const(id=op_id, result=result, value=value),
+            lambda op_id, result: ir.Const(id=op_id, result=result, literal=value),
         )
 
     def bool(self, value: builtins.bool) -> ir.Value:

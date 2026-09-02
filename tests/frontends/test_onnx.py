@@ -91,7 +91,7 @@ def test_imports_initializer_as_tensor_constant() -> None:
             id=ir.ValueId(1),
             type=ir.TensorType(element_type=ir.ScalarType.F32, shape=(2,)),
         ),
-        value=struct.pack("<2f", 2.0, 3.0),
+        literal=struct.pack("<2f", 2.0, 3.0),
     )
     assert multiply.lhs is function.arguments[0]
     assert multiply.rhs is constant.result

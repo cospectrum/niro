@@ -51,7 +51,7 @@ def test_rejects_invalid_constant_at_construction() -> None:
     result = Value(ValueId(0), TensorType(ScalarType.F32, (2,)))
 
     with pytest.raises(ValueError, match="4 bytes, expected 8"):
-        Const(id=OpId(0), result=result, value=bytes(4))
+        Const(id=OpId(0), result=result, literal=bytes(4))
 
 
 def test_rejects_boolean_arithmetic_at_construction() -> None:
@@ -83,4 +83,4 @@ def test_rejects_negative_operation_id_at_construction() -> None:
     result = Value(ValueId(0), ScalarType.I32)
 
     with pytest.raises(ValueError, match="operation ID cannot be negative"):
-        Const(id=OpId(-1), result=result, value=1)
+        Const(id=OpId(-1), result=result, literal=1)

@@ -72,7 +72,7 @@ type Literal = bool | int | float | bytes
 class Const:
     id: OpId
     result: Value
-    value: Literal
+    literal: Literal
 
     def __post_init__(self) -> None:
         validate_const(self)
@@ -271,24 +271,24 @@ def validate_value(value: Value) -> None:
 def validate_const(op: Const) -> None:
     _validate_op_id(op.id)
     match op.result.type:
-        case ScalarType.BOOL if isinstance(op.value, bool):
+        case ScalarType.BOOL if isinstance(op.literal, bool):
             pass
         case ScalarType.I32 | ScalarType.I64 if isinstance(
-            op.value, int
-        ) and not isinstance(op.value, bool):
+            op.literal, int
+        ) and not isinstance(op.literal, bool):
             pass
-        case ScalarType.F32 | ScalarType.F64 if isinstance(op.value, float):
+        case ScalarType.F32 | ScalarType.F64 if isinstance(op.literal, float):
             pass
         case TensorType(element_type, shape) if (
-            isinstance(op.value, bytes)
+            isinstance(op.literal, bytes)
             and shape is not None
             and all(dimension is not None for dimension in shape)
         ):
             size = math.prod(dimension for dimension in shape if dimension is not None)
             expected = size * element_type.byte_width
-            if len(op.value) != expected:
+            if len(op.literal) != expected:
                 raise ValueError(
-                    f"tensor constant has {len(op.value)} bytes, expected {expected}"
+                    f"tensor constant has {len(op.literal)} bytes, expected {expected}"
                 )
         case TensorType():
             raise TypeError("tensor constant requires packed bytes and a static shape")

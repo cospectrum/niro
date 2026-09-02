@@ -145,7 +145,7 @@ def _lower_region(ctx: Ctx, region: ir.Region) -> Region:
 
 def _lower_const(ctx: Ctx, operation: ir.Const) -> None:
     if isinstance(operation.result.type, ir.TensorType):
-        data = cast(bytes, operation.value)
+        data = cast(bytes, operation.literal)
         tensor_type = cast(
             builtin.TensorType[builtin.AnyDenseElement],
             _lower_type(operation.result.type),
@@ -166,7 +166,9 @@ def _lower_const(ctx: Ctx, operation: ir.Const) -> None:
         )
     else:
         scalar_type = operation.result.type
-        lowered = arith.ConstantOp(_lower_scalar_literal(operation.value, scalar_type))
+        lowered = arith.ConstantOp(
+            _lower_scalar_literal(operation.literal, scalar_type)
+        )
     ctx.block.add_op(lowered)
     ctx.values[operation.result.id] = lowered.results[0]
 

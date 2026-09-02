@@ -217,7 +217,7 @@ supporting its validity rules and lowering behavior.
 
 ```python
 result = Value(ValueId(0), ScalarType.F32)
-constant = Const(id=OpId(0), result=result, value=2.0)
+constant = Const(id=OpId(0), result=result, literal=2.0)
 ```
 
 Here, `2.0` is the literal stored in the IR. `result` is the `F32` value used by
