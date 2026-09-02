@@ -1,4 +1,9 @@
-"""Lower Niro IR to high-level MLIR using xDSL."""
+"""Lower Niro IR to high-level MLIR using xDSL.
+
+``_lower_*`` functions return lowered values without mutating caller-owned state.
+``_emit_*`` functions mutate the current :class:`Ctx` by adding operations, binding
+SSA values, or collecting globals.
+"""
 
 from __future__ import annotations
 
@@ -16,6 +21,13 @@ from niro.builder import ENTRY_POINT_ATTR, get_entry_point
 
 @dataclass(slots=True)
 class Ctx:
+    """State for emitting operations in one function scope.
+
+    ``block`` is the current MLIR insertion target and ``values`` contains the Niro
+    values visible in that block. Nested regions use a new block and a copy of the
+    visible values, while sharing ``globals`` and ``function_name`` with their parent.
+    """
+
     block: Block
     values: dict[ir.ValueId, SSAValue]
     globals: list[Operation]
@@ -26,11 +38,15 @@ def lower_to_mlir(module: ir.Module) -> builtin.ModuleOp:
     """Lower a Niro module to a verified, high-level MLIR module."""
     entry_point = get_entry_point(module).name
 
-    globals_: list[Operation] = []
-    functions = [
-        _lower_function(function, entry_point, globals_)
-        for function in module.functions
+    lowered_functions = [
+        _lower_function(function, entry_point) for function in module.functions
     ]
+    globals_ = [
+        global_operation
+        for function_globals, _ in lowered_functions
+        for global_operation in function_globals
+    ]
+    functions = [function for _, function in lowered_functions]
     attributes = _lower_attributes(module.attributes, exclude={ENTRY_POINT_ATTR})
     result = builtin.ModuleOp([*globals_, *functions], attributes=attributes)
     result.verify()
@@ -40,16 +56,16 @@ def lower_to_mlir(module: ir.Module) -> builtin.ModuleOp:
 def _lower_function(
     function: ir.Function,
     entry_point: str,
-    globals_: list[Operation],
-) -> func.FuncOp:
+) -> tuple[tuple[Operation, ...], func.FuncOp]:
     inputs = [_lower_type(value_type) for value_type in function.type.inputs]
     outputs = [_lower_type(value_type) for value_type in function.type.outputs]
     if function.body is None:
         result = func.FuncOp.external(function.name, inputs, outputs)
         result.attributes.update(_lower_attributes(function.attributes))
-        return result
+        return (), result
     (niro_block,) = function.body.blocks
     block = Block(arg_types=inputs)
+    globals_: list[Operation] = []
     ctx = Ctx(
         block=block,
         values={
@@ -61,7 +77,7 @@ def _lower_function(
         globals=globals_,
         function_name=function.name,
     )
-    _lower_operations(ctx, niro_block.operations)
+    _emit_operations(ctx, niro_block.operations)
     result = func.FuncOp(
         function.name,
         (inputs, outputs),
@@ -71,26 +87,26 @@ def _lower_function(
     result.attributes.update(_lower_attributes(function.attributes))
     if function.name == entry_point:
         result.attributes["niro.entry_point"] = builtin.UnitAttr()
-    return result
+    return tuple(globals_), result
 
 
-def _lower_operations(ctx: Ctx, operations: list[ir.Op]) -> None:
+def _emit_operations(ctx: Ctx, operations: list[ir.Op]) -> None:
     for operation in operations:
-        _lower_operation(ctx, operation)
+        _emit_operation(ctx, operation)
 
 
-def _lower_operation(ctx: Ctx, operation: ir.Op) -> None:
+def _emit_operation(ctx: Ctx, operation: ir.Op) -> None:
     match operation:
         case ir.Const():
-            _lower_const(ctx, operation)
+            _emit_const(ctx, operation)
         case ir.Add():
-            _lower_arithmetic(ctx, operation, arith.AddiOp, arith.AddfOp)
+            _emit_arithmetic(ctx, operation, arith.AddiOp, arith.AddfOp)
         case ir.Mul():
-            _lower_arithmetic(ctx, operation, arith.MuliOp, arith.MulfOp)
+            _emit_arithmetic(ctx, operation, arith.MuliOp, arith.MulfOp)
         case ir.MatMul():
-            _lower_matmul(ctx, operation)
+            _emit_matmul(ctx, operation)
         case ir.Transpose():
-            _lower_transpose(ctx, operation)
+            _emit_transpose(ctx, operation)
         case ir.Call():
             lowered = func.CallOp(
                 operation.callee,
@@ -98,7 +114,7 @@ def _lower_operation(ctx: Ctx, operation: ir.Op) -> None:
                 [_lower_type(value.type) for value in operation.results],
             )
             ctx.block.add_op(lowered)
-            _record_results(ctx, operation.results, lowered.results)
+            _bind_results(ctx, operation.results, lowered.results)
         case ir.Return():
             ctx.block.add_op(
                 func.ReturnOp(
@@ -115,26 +131,26 @@ def _lower_operation(ctx: Ctx, operation: ir.Op) -> None:
             lowered = scf.IfOp(
                 _lookup_value(ctx, operation.condition),
                 [_lower_type(value.type) for value in operation.results],
-                _lower_region(ctx, operation.then_region),
-                _lower_region(ctx, operation.else_region),
+                _emit_region(ctx, operation.then_region),
+                _emit_region(ctx, operation.else_region),
             )
             ctx.block.add_op(lowered)
-            _record_results(ctx, operation.results, lowered.results)
+            _bind_results(ctx, operation.results, lowered.results)
         case ir.UnknownOp():
             raise NotImplementedError(
                 f"cannot lower unknown operation to MLIR: {operation.name}"
             )
 
 
-def _lower_region(ctx: Ctx, region: ir.Region) -> Region:
+def _emit_region(ctx: Ctx, region: ir.Region) -> Region:
     (niro_block,) = region.blocks
     block = Block()
     nested = Ctx(block, dict(ctx.values), ctx.globals, ctx.function_name)
-    _lower_operations(nested, niro_block.operations)
+    _emit_operations(nested, niro_block.operations)
     return Region(block)
 
 
-def _lower_const(ctx: Ctx, operation: ir.Const) -> None:
+def _emit_const(ctx: Ctx, operation: ir.Const) -> None:
     if isinstance(operation.result.type, ir.TensorType):
         data = cast(bytes, operation.literal)
         tensor_type = cast(
@@ -164,7 +180,7 @@ def _lower_const(ctx: Ctx, operation: ir.Const) -> None:
     ctx.values[operation.result.id] = lowered.results[0]
 
 
-def _lower_arithmetic(
+def _emit_arithmetic(
     ctx: Ctx,
     operation: ir.Add | ir.Mul,
     integer_op: type[arith.AddiOp | arith.MuliOp],
@@ -185,7 +201,7 @@ def _lower_arithmetic(
     ctx.values[operation.result.id] = lowered.result
 
 
-def _lower_transpose(ctx: Ctx, operation: ir.Transpose) -> None:
+def _emit_transpose(ctx: Ctx, operation: ir.Transpose) -> None:
     result_type = cast(ir.TensorType, operation.result.type)
     _require_static_shape(result_type, "transpose")
     lowered_type = _lower_type(result_type)
@@ -201,7 +217,7 @@ def _lower_transpose(ctx: Ctx, operation: ir.Transpose) -> None:
     ctx.values[operation.result.id] = lowered.results[0]
 
 
-def _lower_matmul(ctx: Ctx, operation: ir.MatMul) -> None:
+def _emit_matmul(ctx: Ctx, operation: ir.MatMul) -> None:
     lhs_type = cast(ir.TensorType, operation.lhs.type)
     rhs_type = cast(ir.TensorType, operation.rhs.type)
     result_type = cast(ir.TensorType, operation.result.type)
@@ -320,7 +336,7 @@ def _lookup_value(ctx: Ctx, value: ir.Value) -> SSAValue:
     return ctx.values[value.id]
 
 
-def _record_results(
+def _bind_results(
     ctx: Ctx,
     niro_values: tuple[ir.Value, ...],
     mlir_values: tuple[SSAValue, ...],
