@@ -41,6 +41,8 @@ def test_imports_add_graph() -> None:
         ),
         outputs=(ir.TensorType(element_type=ir.ScalarType.F32, shape=(2,)),),
     )
+    assert function.input_names == ("lhs", "rhs")
+    assert function.output_names == ("sum",)
     assert function.body is not None
     add, return_ = function.body.blocks[0].operations
     assert isinstance(add, ir.Add)

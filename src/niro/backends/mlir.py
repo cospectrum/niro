@@ -11,7 +11,7 @@ from xdsl.dialects.linalg import ops as linalg
 from xdsl.ir import Attribute, Block, Operation, Region, SSAValue
 
 from niro import ir
-from niro.builder import ENTRY_POINT_ATTR
+from niro.builder import ENTRY_POINT_ATTR, get_entry_point
 
 
 @dataclass(slots=True)
@@ -24,16 +24,7 @@ class Ctx:
 
 def lower_to_mlir(module: ir.Module) -> builtin.ModuleOp:
     """Lower a Niro module to a verified, high-level MLIR module."""
-    entry_point = module.attributes.get(ENTRY_POINT_ATTR)
-    if entry_point is None:
-        raise ValueError("Niro module must have an entry point")
-    if not isinstance(entry_point, str):
-        raise TypeError("Niro entry point must be a string")
-    if not any(
-        function.name == entry_point and function.body is not None
-        for function in module.functions
-    ):
-        raise ValueError(f"invalid Niro entry point: {entry_point!r}")
+    entry_point = get_entry_point(module).name
 
     globals_: list[Operation] = []
     functions = [

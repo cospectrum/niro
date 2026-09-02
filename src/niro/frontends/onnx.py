@@ -32,6 +32,8 @@ def import_onnx(onnx_model: onnx.ModelProto) -> ir.Module:
         name=graph.name or "main",
         arg_types=[_lookup_type(types, value.name) for value in inputs],
         ret_types=[_lookup_type(types, value.name) for value in graph.output],
+        input_names=[value.name for value in inputs],
+        output_names=[value.name for value in graph.output],
     )
     ctx = Ctx(
         graph=graph,

@@ -1,158 +1,115 @@
-"""Core intermediate representation used by niro.
-
-This module contains only the data model. Construction conveniences belong in
-the builder module, while validation and transformations can operate directly
-on these classes.
-"""
+"""Operations and their invariants in Niro IR."""
 
 from __future__ import annotations
 
-import enum
 import math
 from dataclasses import dataclass, field
-from typing import NewType
+from typing import TYPE_CHECKING, assert_never, cast
 
-FuncId = NewType("FuncId", int)
-OpId = NewType("OpId", int)
-ValueId = NewType("ValueId", int)
+from niro.ir.types import ScalarType, TensorType, Type
+from niro.ir.values import Attribute, Literal, OpId, Value
 
-
-class ScalarType(enum.Enum):
-    BOOL = "bool"
-    I32 = "i32"
-    I64 = "i64"
-    F32 = "f32"
-    F64 = "f64"
-
-    @property
-    def byte_width(self) -> int:
-        return {
-            ScalarType.BOOL: 1,
-            ScalarType.I32: 4,
-            ScalarType.I64: 8,
-            ScalarType.F32: 4,
-            ScalarType.F64: 8,
-        }[self]
+if TYPE_CHECKING:
+    from niro.ir.program import Region
 
 
-# None represents an anonymous dynamic dimension.
-type Dimension = int | None
-type Shape = tuple[Dimension, ...]
+class OpMixin:
+    """Common, immutable queries supported by every operation."""
+
+    def get_operands(self) -> tuple[Value, ...]:
+        """Return the SSA values consumed by this operation."""
+        return _get_operands(cast("Op", self))
+
+    def get_results(self) -> tuple[Value, ...]:
+        """Return the SSA values produced by this operation."""
+        return _get_results(cast("Op", self))
 
 
 @dataclass(frozen=True, slots=True)
-class TensorType:
-    element_type: ScalarType
-    # None represents an unranked tensor; () represents a rank-zero tensor.
-    shape: Shape | None
-
-    def __post_init__(self) -> None:
-        validate_tensor_type(self)
-
-
-type Type = ScalarType | TensorType
-
-
-@dataclass(frozen=True, slots=True)
-class Value:
-    """A typed SSA value whose ID is unique within its function."""
-
-    id: ValueId
-    type: Type
-
-    def __post_init__(self) -> None:
-        validate_value(self)
-
-
-type Attribute = None | bool | int | float | str | bytes | tuple[Attribute, ...]
-type Literal = bool | int | float | bytes
-
-
-@dataclass(frozen=True, slots=True)
-class Const:
+class Const(OpMixin):
     id: OpId
     result: Value
     literal: Literal
 
     def __post_init__(self) -> None:
-        validate_const(self)
+        _validate_const(self)
 
 
 @dataclass(frozen=True, slots=True)
-class Transpose:
+class Transpose(OpMixin):
     id: OpId
     result: Value
     operand: Value
     permutation: tuple[int, ...]
 
     def __post_init__(self) -> None:
-        validate_transpose(self)
+        _validate_transpose(self)
 
 
 @dataclass(frozen=True, slots=True)
-class Add:
+class Add(OpMixin):
     id: OpId
     result: Value
     lhs: Value
     rhs: Value
 
     def __post_init__(self) -> None:
-        validate_add(self)
+        _validate_add(self)
 
 
 @dataclass(frozen=True, slots=True)
-class Mul:
+class Mul(OpMixin):
     id: OpId
     result: Value
     lhs: Value
     rhs: Value
 
     def __post_init__(self) -> None:
-        validate_mul(self)
+        _validate_mul(self)
 
 
 @dataclass(frozen=True, slots=True)
-class MatMul:
+class MatMul(OpMixin):
     id: OpId
     result: Value
     lhs: Value
     rhs: Value
 
     def __post_init__(self) -> None:
-        validate_matmul(self)
+        _validate_matmul(self)
 
 
 @dataclass(frozen=True, slots=True)
-class Call:
+class Call(OpMixin):
     id: OpId
     callee: str
     arguments: tuple[Value, ...]
     results: tuple[Value, ...]
 
     def __post_init__(self) -> None:
-        validate_call(self)
+        _validate_op_id(self.id)
 
 
 @dataclass(frozen=True, slots=True)
-class Return:
+class Return(OpMixin):
     id: OpId
     operands: tuple[Value, ...] = ()
 
     def __post_init__(self) -> None:
-        validate_return(self)
+        _validate_op_id(self.id)
 
 
 @dataclass(frozen=True, slots=True)
-class Yield:
+class Yield(OpMixin):
     id: OpId
     operands: tuple[Value, ...] = ()
 
     def __post_init__(self) -> None:
-        validate_yield(self)
+        _validate_op_id(self.id)
 
 
 @dataclass(frozen=True, slots=True)
-class If:
+class If(OpMixin):
     id: OpId
     results: tuple[Value, ...]
     condition: Value
@@ -160,11 +117,13 @@ class If:
     else_region: Region
 
     def __post_init__(self) -> None:
-        validate_if(self)
+        _validate_op_id(self.id)
+        if self.condition.type is not ScalarType.BOOL:
+            raise TypeError("if condition must be boolean")
 
 
 @dataclass(frozen=True, slots=True)
-class UnknownOp:
+class UnknownOp(OpMixin):
     """A structurally valid operation whose semantics are unknown to niro."""
 
     id: OpId
@@ -175,7 +134,9 @@ class UnknownOp:
     regions: tuple[Region, ...] = ()
 
     def __post_init__(self) -> None:
-        validate_unknown_op(self)
+        _validate_op_id(self.id)
+        if not self.name:
+            raise ValueError("unknown operation name cannot be empty")
 
 
 type Op = (
@@ -183,47 +144,42 @@ type Op = (
 )
 
 
-@dataclass(slots=True)
-class Block:
-    arguments: tuple[Value, ...] = ()
-    operations: list[Op] = field(default_factory=list)
-
-
-@dataclass(slots=True)
-class Region:
-    blocks: list[Block] = field(default_factory=list)
-
-
-@dataclass(frozen=True, slots=True)
-class FunctionType:
-    inputs: tuple[Type, ...]
-    outputs: tuple[Type, ...]
-
-
-@dataclass(slots=True)
-class Function:
-    id: FuncId
-    name: str
-    type: FunctionType
-    # None denotes an external declaration.
-    body: Region | None = None
-    attributes: dict[str, Attribute] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        validate_function(self)
-
-    @property
-    def arguments(self) -> tuple[Value, ...]:
-        """Return the entry block arguments of a defined function."""
-        if self.body is None or not self.body.blocks:
+def _get_operands(op: Op) -> tuple[Value, ...]:
+    match op:
+        case Const():
             return ()
-        return self.body.blocks[0].arguments
+        case Transpose(operand=operand):
+            return (operand,)
+        case Add(lhs=lhs, rhs=rhs) | Mul(lhs=lhs, rhs=rhs) | MatMul(lhs=lhs, rhs=rhs):
+            return lhs, rhs
+        case Call(arguments=arguments):
+            return arguments
+        case Return(operands=operands) | Yield(operands=operands):
+            return operands
+        case If(condition=condition):
+            return (condition,)
+        case UnknownOp(operands=operands):
+            return operands
+        case _ as unreachable:
+            assert_never(unreachable)
 
 
-@dataclass(slots=True)
-class Module:
-    functions: list[Function] = field(default_factory=list)
-    attributes: dict[str, Attribute] = field(default_factory=dict)
+def _get_results(op: Op) -> tuple[Value, ...]:
+    match op:
+        case (
+            Const(result=result)
+            | Transpose(result=result)
+            | Add(result=result)
+            | Mul(result=result)
+            | MatMul(result=result)
+        ):
+            return (result,)
+        case Call(results=results) | If(results=results) | UnknownOp(results=results):
+            return results
+        case Return() | Yield():
+            return ()
+        case _ as unreachable:
+            assert_never(unreachable)
 
 
 def transpose_result_type(
@@ -256,19 +212,7 @@ def matmul_result_type(lhs: Type, rhs: Type) -> TensorType:
     return TensorType(lhs.element_type, (lhs.shape[0], rhs.shape[1]))
 
 
-def validate_tensor_type(tensor_type: TensorType) -> None:
-    if tensor_type.shape is None:
-        return
-    if any(dimension is not None and dimension < 0 for dimension in tensor_type.shape):
-        raise ValueError("tensor dimensions cannot be negative")
-
-
-def validate_value(value: Value) -> None:
-    if value.id < 0:
-        raise ValueError("value ID cannot be negative")
-
-
-def validate_const(op: Const) -> None:
+def _validate_const(op: Const) -> None:
     _validate_op_id(op.id)
     match op.result.type:
         case ScalarType.BOOL if isinstance(op.literal, bool):
@@ -296,58 +240,27 @@ def validate_const(op: Const) -> None:
             raise TypeError("constant value does not match its result type")
 
 
-def validate_transpose(op: Transpose) -> None:
+def _validate_transpose(op: Transpose) -> None:
     _validate_op_id(op.id)
     expected = transpose_result_type(op.operand.type, op.permutation)
     if op.result.type != expected:
         raise TypeError("transpose result type does not match its operands")
 
 
-def validate_add(op: Add) -> None:
+def _validate_add(op: Add) -> None:
     _validate_op_id(op.id)
     _require_matching_numeric_types("add", op.result, op.lhs, op.rhs)
 
 
-def validate_mul(op: Mul) -> None:
+def _validate_mul(op: Mul) -> None:
     _validate_op_id(op.id)
     _require_matching_numeric_types("mul", op.result, op.lhs, op.rhs)
 
 
-def validate_matmul(op: MatMul) -> None:
+def _validate_matmul(op: MatMul) -> None:
     _validate_op_id(op.id)
     if op.result.type != matmul_result_type(op.lhs.type, op.rhs.type):
         raise TypeError("matmul result type does not match its operands")
-
-
-def validate_call(op: Call) -> None:
-    _validate_op_id(op.id)
-
-
-def validate_return(op: Return) -> None:
-    _validate_op_id(op.id)
-
-
-def validate_yield(op: Yield) -> None:
-    _validate_op_id(op.id)
-
-
-def validate_if(op: If) -> None:
-    _validate_op_id(op.id)
-    if op.condition.type is not ScalarType.BOOL:
-        raise TypeError("if condition must be boolean")
-
-
-def validate_unknown_op(op: UnknownOp) -> None:
-    _validate_op_id(op.id)
-    if not op.name:
-        raise ValueError("unknown operation name cannot be empty")
-
-
-def validate_function(function: Function) -> None:
-    if function.id < 0:
-        raise ValueError("function ID cannot be negative")
-    if not function.name:
-        raise ValueError("function name cannot be empty")
 
 
 def _validate_op_id(op_id: OpId) -> None:
@@ -356,10 +269,7 @@ def _validate_op_id(op_id: OpId) -> None:
 
 
 def _require_matching_numeric_types(
-    operation: str,
-    result: Value,
-    lhs: Value,
-    rhs: Value,
+    operation: str, result: Value, lhs: Value, rhs: Value
 ) -> None:
     if lhs.type != rhs.type or result.type != lhs.type:
         raise TypeError(f"{operation} operands and result must have the same type")

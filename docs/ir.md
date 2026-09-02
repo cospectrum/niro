@@ -7,7 +7,17 @@ backends.
 This document defines the IR itself: its types, values, structure, operations,
 and validity rules.
 
-The current reference implementation is in `src/niro/ir.py`.
+The current reference implementation is in `src/niro/ir/`.
+
+## Contents
+
+- [Types](#types)
+- [SSA values](#ssa-values)
+- [Program](#program)
+- [Stored data](#stored-data)
+- [Operations](#operations)
+- [Complete example](#complete-example)
+- [Well-formed IR](#well-formed-ir)
 
 ## Types
 
@@ -84,7 +94,7 @@ The ID and type cannot change. A value is defined when it appears as a block
 argument or as an operation result. Later operations refer to that value as an
 operand. The value's definition is identified by its position in the IR.
 
-## Program structure
+## Program
 
 Niro uses the following hierarchy:
 
@@ -155,6 +165,11 @@ A function without a body is declared here but implemented elsewhere. For a
 defined function, the entry block arguments must match the signature's input
 types.
 
+`input_names` and `output_names` optionally describe the function's public
+interface. A present sequence has the same arity as its side of the function
+type. Each position contains either a non-empty name or `None` for an unnamed
+item. These names are metadata and do not replace numeric SSA value IDs.
+
 ### `Module`
 
 A module owns the functions in a program and provides the symbol scope used to
@@ -165,6 +180,20 @@ module = Module(functions=[external])
 ```
 
 Function names must be unique within a module.
+
+### `Op`
+
+`Op` is the closed union of operation kinds that may appear in a block:
+
+```python
+type Op = (
+    Const | Transpose | Add | Mul | MatMul | Call | Return | Yield | If | UnknownOp
+)
+```
+
+The concrete operations are described in the Operations section below. Keeping
+the union explicit makes generic operation handling exhaustive when new kinds
+are added.
 
 ## Stored data
 

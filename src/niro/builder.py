@@ -28,21 +28,29 @@ class ModuleBuilder:
         name: str,
         arg_types: Sequence[ir.Type] = (),
         ret_types: Sequence[ir.Type] = (),
+        input_names: Sequence[str | None] | None = None,
+        output_names: Sequence[str | None] | None = None,
     ) -> FunctionBuilder:
         """Create a defined function with one empty entry block."""
-        return FunctionBuilder(self, name, arg_types, ret_types)
+        return FunctionBuilder(
+            self, name, arg_types, ret_types, input_names, output_names
+        )
 
     def extern(
         self,
         name: str,
         arg_types: Sequence[ir.Type] = (),
         ret_types: Sequence[ir.Type] = (),
+        input_names: Sequence[str | None] | None = None,
+        output_names: Sequence[str | None] | None = None,
     ) -> ir.Function:
         """Declare a function whose implementation is outside this module."""
         function = ir.Function(
             id=ir.FuncId(len(self.ir.functions)),
             name=name,
             type=ir.FunctionType(tuple(arg_types), tuple(ret_types)),
+            input_names=None if input_names is None else tuple(input_names),
+            output_names=None if output_names is None else tuple(output_names),
         )
         self._register_function(function)
         return function
@@ -93,6 +101,8 @@ class FunctionBuilder:
         name: str,
         arg_types: Sequence[ir.Type],
         ret_types: Sequence[ir.Type],
+        input_names: Sequence[str | None] | None,
+        output_names: Sequence[str | None] | None,
     ) -> None:
         self._module = module
         self._operations: list[ir.Op] = []
@@ -102,6 +112,8 @@ class FunctionBuilder:
             id=ir.FuncId(len(module.ir.functions)),
             name=name,
             type=ir.FunctionType(tuple(arg_types), tuple(ret_types)),
+            input_names=None if input_names is None else tuple(input_names),
+            output_names=None if output_names is None else tuple(output_names),
             body=region,
         )
         self.body = RegionBuilder(self, region)
@@ -148,6 +160,19 @@ class FunctionBuilder:
             raise TypeError(
                 f"call argument types {actual!r} do not match {function.type.inputs!r}"
             )
+
+
+def get_entry_point(module: ir.Module) -> ir.Function:
+    """Return the module's defined entry-point function."""
+    entry_point = module.attributes.get(ENTRY_POINT_ATTR)
+    if entry_point is None:
+        raise ValueError("Niro module must have an entry point")
+    if not isinstance(entry_point, str):
+        raise TypeError("Niro entry point must be a string")
+    for function in module.functions:
+        if function.name == entry_point and function.body is not None:
+            return function
+    raise ValueError(f"invalid Niro entry point: {entry_point!r}")
 
 
 class RegionBuilder:

@@ -38,6 +38,12 @@ reading from standard input:
 niro emit mlir --input-format onnx < model.onnx | mlir-opt
 ```
 
+Inspect a model's entry-point signature:
+
+```sh
+niro inspect signature model.onnx
+```
+
 ## Development
 
 Run the local CI checks with:
