@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from io import StringIO
+import sys
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from google.protobuf.message import DecodeError
-from xdsl.printer import Printer
 
-from niro.backends.mlir import lower_to_mlir
+from niro.backends.mlir import lower_to_mlir, write_mlir
 from niro.cli.input import InputFormat, load_model, resolve_input_format
 from niro.frontends.onnx import import_onnx
 
@@ -46,16 +45,12 @@ def emit_mlir(
     try:
         model = load_model(input_path, resolved_format)
         lowered = lower_to_mlir(import_onnx(model))
-        stream = StringIO()
-        Printer(stream=stream).print_op(lowered)
-        _write_output(output_path, stream.getvalue())
+        destination = (
+            sys.stdout
+            if output_path is None or output_path == Path("-")
+            else output_path
+        )
+        write_mlir(lowered, destination)
     except (DecodeError, OSError, TypeError, ValueError, NotImplementedError) as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(code=1) from error
-
-
-def _write_output(output_path: Path | None, output: str) -> None:
-    if output_path is None or output_path == Path("-"):
-        typer.echo(output, nl=False)
-        return
-    output_path.write_text(output, encoding="utf-8")

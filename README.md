@@ -15,6 +15,20 @@ include WebAssembly, [GIMPLE], and others.
 
 The Niro IR is described in [docs/ir.md](docs/ir.md).
 
+## Installation
+
+Install Niro as a command-line tool:
+
+```sh
+uv tool install niro
+```
+
+Or add it as a library dependency to a project:
+
+```sh
+uv add niro
+```
+
 ## Usage
 
 ### CLI
@@ -42,6 +56,21 @@ Inspect a model's entry-point signature:
 
 ```sh
 niro inspect signature model.onnx
+```
+
+### Library
+
+Import an ONNX model into Niro IR and lower it to MLIR:
+
+```python
+import onnx
+
+from niro import import_onnx, lower_to_mlir, write_mlir
+
+onnx_model = onnx.load("model.onnx")
+module = import_onnx(onnx_model)
+mlir_module = lower_to_mlir(module)
+write_mlir(mlir_module, "model.mlir")
 ```
 
 ## Development

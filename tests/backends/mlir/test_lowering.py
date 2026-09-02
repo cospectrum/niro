@@ -1,18 +1,9 @@
-from io import StringIO
-
 import pytest
 from xdsl.dialects import builtin, ml_program
-from xdsl.printer import Printer
 
 from niro import ir
-from niro.backends.mlir import lower_to_mlir
+from niro.backends.mlir import format_mlir, lower_to_mlir
 from niro.builder import ModuleBuilder
-
-
-def mlir_text(module: builtin.ModuleOp) -> str:
-    stream = StringIO()
-    Printer(stream=stream).print_op(module)
-    return stream.getvalue()
 
 
 def test_lowers_public_entry_point_and_tensor_add() -> None:
@@ -27,7 +18,7 @@ def test_lowers_public_entry_point_and_tensor_add() -> None:
     function.entry.return_(result)
     module.set_entry_point(function)
 
-    text = mlir_text(lower_to_mlir(module.ir))
+    text = format_mlir(lower_to_mlir(module.ir))
 
     assert "func.func public @model" in text
     assert "attributes {niro.entry_point}" in text
@@ -56,7 +47,7 @@ def test_lowers_tensor_weight_to_private_immutable_global() -> None:
     assert isinstance(global_, ml_program.GlobalOp)
     assert isinstance(global_.value, builtin.DenseIntOrFPElementsAttr)
     assert global_.value.data.data == data
-    text = mlir_text(lowered)
+    text = format_mlir(lowered)
     assert "ml_program.global private @__niro_model_1" in text
     assert "ml_program.global_load_const @__niro_model_1" in text
     assert text.index("linalg.fill") < text.index("linalg.matmul")
@@ -80,7 +71,7 @@ def test_lowers_private_helper_and_call() -> None:
     main.entry.return_(result)
     module.set_entry_point(main)
 
-    text = mlir_text(lower_to_mlir(module.ir))
+    text = format_mlir(lower_to_mlir(module.ir))
 
     assert "func.func private @helper" in text
     assert "func.func public @model" in text
@@ -100,7 +91,7 @@ def test_lowers_static_transpose() -> None:
     function.entry.return_(result)
     module.set_entry_point(function)
 
-    text = mlir_text(lower_to_mlir(module.ir))
+    text = format_mlir(lower_to_mlir(module.ir))
 
     assert "%1 = tensor.empty() : tensor<3x2xf32>" in text
     assert "linalg.transpose" in text
@@ -143,7 +134,7 @@ def test_lowers_if_and_yield() -> None:
         attributes={"entry_point": "model"},
     )
 
-    text = mlir_text(lower_to_mlir(module))
+    text = format_mlir(lower_to_mlir(module))
 
     assert "scf.if %0 -> (i1)" in text
     assert text.count("scf.yield %0 : i1") == 2
@@ -158,7 +149,7 @@ def test_preserves_metadata_with_niro_namespace() -> None:
     module.ir.attributes["version"] = 1
     module.set_entry_point(function)
 
-    text = mlir_text(lower_to_mlir(module.ir))
+    text = format_mlir(lower_to_mlir(module.ir))
 
     assert "niro.version = 1 : i64" in text
     assert 'niro.note = "function"' in text
