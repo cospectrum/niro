@@ -65,11 +65,11 @@ Import an ONNX model into Niro IR and lower it to MLIR:
 ```python
 import onnx
 
-from niro import import_onnx, lower_to_mlir, write_mlir
+from niro import export_mlir, import_onnx, write_mlir
 
 onnx_model = onnx.load("model.onnx")
 module = import_onnx(onnx_model)
-mlir_module = lower_to_mlir(module)
+mlir_module = export_mlir(module)
 write_mlir(mlir_module, "model.mlir")
 ```
 

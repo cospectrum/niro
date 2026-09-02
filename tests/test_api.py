@@ -43,13 +43,13 @@ def test_exports_import_onnx() -> None:
     assert niro.import_onnx is onnx_import_onnx
 
 
-def test_exports_lower_to_mlir() -> None:
+def test_exports_mlir() -> None:
     import niro
-    from niro import lower_to_mlir
-    from niro.mlir import lower_to_mlir as mlir_lower_to_mlir
+    from niro import export_mlir
+    from niro.mlir import export_mlir as mlir_export_mlir
 
-    assert lower_to_mlir is mlir_lower_to_mlir
-    assert niro.lower_to_mlir is mlir_lower_to_mlir
+    assert export_mlir is mlir_export_mlir
+    assert niro.export_mlir is mlir_export_mlir
 
 
 def test_exports_mlir_output() -> None:

@@ -10,7 +10,7 @@ import typer
 from google.protobuf.message import DecodeError
 
 from niro.cli.input import InputFormat, load_model, resolve_input_format
-from niro.mlir import lower_to_mlir, write_mlir
+from niro.mlir import export_mlir, write_mlir
 from niro.onnx import import_onnx
 
 
@@ -44,7 +44,7 @@ def emit_mlir(
     resolved_format = resolve_input_format(input_path, input_format)
     try:
         model = load_model(input_path, resolved_format)
-        lowered = lower_to_mlir(import_onnx(model))
+        lowered = export_mlir(import_onnx(model))
         destination = (
             sys.stdout
             if output_path is None or output_path == Path("-")

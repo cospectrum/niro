@@ -34,8 +34,8 @@ class Ctx:
     function_name: str
 
 
-def lower_to_mlir(module: ir.Module) -> builtin.ModuleOp:
-    """Lower a Niro module to a verified, high-level MLIR module."""
+def export_mlir(module: ir.Module) -> builtin.ModuleOp:
+    """Export a Niro module as a verified, high-level MLIR module."""
     entry_point = get_entry_point(module).name
 
     lowered_functions = [
