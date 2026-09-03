@@ -12,7 +12,7 @@ type GlobalTarget = ir.Global | ir.SymbolName
 class Ctx:
     def __init__(self, module: ir.Module, function: ir.Function) -> None:
         self._module = module
-        self._function = function
+        self.function = function
         self._next_value_id = 0
 
     def new_value(self, type: ir.Type) -> ir.Value:
@@ -101,18 +101,29 @@ class RegionBuilder:
 
     def first_block(self) -> BlockBuilder:
         if self.ir.blocks:
-            raise ValueError("region already has blocks")
-        return self.block()
+            raise ValueError("region already has a first block")
+        input_types = self._input_types
+        return self.block(input_types)
 
     def block(self, arg_types: Sequence[ir.Type] = ()) -> BlockBuilder:
         """Append a block with arguments of the given types."""
         if self.ir.blocks:
             raise ValueError("multiple blocks per region are not supported")
+        if self.ir is self._ctx.function.body and tuple(arg_types) != self._input_types:
+            raise TypeError(
+                "entry block argument types must match function input types"
+            )
         args = tuple(self._ctx.new_value(type) for type in arg_types)
         block = ir.Block(arguments=args)
         builder = BlockBuilder(self._ctx, block)
         self.ir.blocks.append(block)
         return builder
+
+    @property
+    def _input_types(self) -> tuple[ir.Type, ...]:
+        if self.ir is self._ctx.function.body:
+            return self._ctx.function.type.inputs
+        return ()
 
 
 class BlockBuilder:
