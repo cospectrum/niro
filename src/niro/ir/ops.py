@@ -6,11 +6,12 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, assert_never, cast
 
+from niro.ir.data import Attributes, Literal
 from niro.ir.types import ScalarType, TensorType, Type
-from niro.ir.values import Attributes, Literal, SymbolName, Value
+from niro.ir.values import Value
 
 if TYPE_CHECKING:
-    from .program import Region
+    from niro.ir.program import Region, SymbolName
 
 
 type Op = (

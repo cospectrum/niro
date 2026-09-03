@@ -19,6 +19,45 @@ def test_rejects_second_block_in_region() -> None:
         region.block()
 
 
+def test_function_first_block_arguments_match_function_inputs() -> None:
+    function = ModuleBuilder().function(
+        name="main",
+        type=ir.FunctionType((ir.ScalarType.F32, ir.ScalarType.I64), ()),
+    )
+
+    block = function.region().first_block()
+
+    assert tuple(argument.type for argument in block.ir.arguments) == (
+        ir.ScalarType.F32,
+        ir.ScalarType.I64,
+    )
+
+
+def test_function_block_rejects_arguments_that_do_not_match_inputs() -> None:
+    function = ModuleBuilder().function(
+        name="main",
+        type=ir.FunctionType((ir.ScalarType.F32,), ()),
+    )
+
+    with pytest.raises(TypeError, match="must match function input types"):
+        function.region().block((ir.ScalarType.I64,))
+
+
+def test_nested_region_first_block_has_no_function_arguments() -> None:
+    function = ModuleBuilder().function(
+        name="main",
+        type=ir.FunctionType((ir.ScalarType.F32,), ()),
+    )
+    block = function.region().first_block()
+    conditional = block.if_(block.bool(True))
+
+    then_block = conditional.then_region.first_block()
+    else_block = conditional.else_region.first_block()
+
+    assert then_block.ir.arguments == ()
+    assert else_block.ir.arguments == ()
+
+
 def test_rejects_operation_after_terminator() -> None:
     block = function_builder().region().block()
     block.return_()

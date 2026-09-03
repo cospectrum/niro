@@ -5,11 +5,6 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass
 
-type Type = ScalarType | TensorType
-
-type Dimension = int | None
-type Shape = tuple[Dimension, ...]
-
 
 class ScalarType(enum.Enum):
     BOOL = "bool"
@@ -27,6 +22,10 @@ class ScalarType(enum.Enum):
             ScalarType.F32: 4,
             ScalarType.F64: 8,
         }[self]
+
+
+type Dimension = int | None
+type Shape = tuple[Dimension, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,3 +48,6 @@ class TensorType:
                 continue
             if dim < 0:
                 raise ValueError("tensor dimension cannot be negative")
+
+
+type Type = ScalarType | TensorType

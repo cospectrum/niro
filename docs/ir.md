@@ -14,7 +14,7 @@ The current reference implementation is in `src/niro/ir/`.
 - [Types](#types)
 - [SSA values](#ssa-values)
 - [Program](#program)
-- [Stored data](#stored-data)
+- [Literals and attributes](#literals-and-attributes)
 - [Operations](#operations)
 - [Complete example](#complete-example)
 - [Well-formed IR](#well-formed-ir)
@@ -71,12 +71,6 @@ including its nested regions. Different functions may reuse the same IDs.
 Function inputs, block inputs, and operation results share the same
 function-level ID namespace.
 
-### `SymbolName`
-
-`SymbolName` names a module-level declaration. Functions and globals share one
-symbol namespace and references to either are resolved by name. Operations are
-unnamed; their SSA results are identified by `ValueId`.
-
 ### `Value`
 
 A `Value` is an immutable reference containing an ID and type:
@@ -112,8 +106,17 @@ block = Block(arguments=(x,), operations=[])
 ```
 
 Block arguments are values available from the start of the block. The entry
-block of a function uses them for the function inputs. All blocks in a function
-share its value-ID namespace.
+block of a defined function uses them as its function inputs. Their types must
+match `FunctionType.inputs` in the same order:
+
+```python
+tuple(
+    argument.type for argument in function.first_block.arguments
+) == function.type.inputs
+```
+
+An external function has no body and therefore no entry block or block
+arguments. All blocks in a function share its value-ID namespace.
 
 ### `Region`
 
@@ -130,6 +133,12 @@ Values created inside it can leave only through results of that operation.
 
 Niro currently requires a single block in regions used for structured control
 flow. General multi-block control flow may be supported later.
+
+### `SymbolName`
+
+`SymbolName` names a module-level declaration. Functions and globals share one
+symbol namespace and references to either are resolved by name. Operations are
+unnamed; their SSA results are identified by `ValueId`.
 
 ### `FunctionType`
 
@@ -156,9 +165,9 @@ external = Function(
 )
 ```
 
-A function without a body is declared here but implemented elsewhere. For a
-defined function, the entry block arguments must match the signature's input
-types.
+A function without a body is declared here but implemented elsewhere. A
+defined function has an entry block whose arguments represent the inputs
+described by its `FunctionType`.
 
 `input_names` and `output_names` optionally describe the function's public
 interface. A present sequence has the same arity as its side of the function
@@ -200,7 +209,7 @@ The concrete operations are described in the Operations section below. Keeping
 the union explicit makes generic operation handling exhaustive when new kinds
 are added.
 
-## Stored data
+## Literals and attributes
 
 ### `Literal`
 

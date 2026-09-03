@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from niro.ir.data import Attributes, Literal
 from niro.ir.ops import Op
 from niro.ir.types import Type
-from niro.ir.values import Attributes, Literal, SymbolName, Value
+from niro.ir.values import Value
+
+type SymbolName = str
 
 
 @dataclass(slots=True)
@@ -28,6 +31,12 @@ class FunctionType:
 
 @dataclass(slots=True)
 class Function:
+    """A function declaration or definition.
+
+    A definition's entry block arguments represent its inputs and must have the
+    types in ``type.inputs``. A declaration has no body or entry block.
+    """
+
     name: SymbolName
     type: FunctionType
     body: Region | None = None

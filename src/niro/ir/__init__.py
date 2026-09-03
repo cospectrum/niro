@@ -1,5 +1,6 @@
 """Core intermediate representation used by Niro."""
 
+from niro.ir.data import AttributeName, Attributes, AttributeValue, Literal
 from niro.ir.ops import (
     Add,
     Call,
@@ -16,17 +17,17 @@ from niro.ir.ops import (
     matmul_result_type,
     transpose_result_type,
 )
-from niro.ir.program import Block, Function, FunctionType, Global, Module, Region
-from niro.ir.types import Dimension, ScalarType, Shape, TensorType, Type
-from niro.ir.values import (
-    AttributeName,
-    Attributes,
-    AttributeValue,
-    Literal,
+from niro.ir.program import (
+    Block,
+    Function,
+    FunctionType,
+    Global,
+    Module,
+    Region,
     SymbolName,
-    Value,
-    ValueId,
 )
+from niro.ir.types import Dimension, ScalarType, Shape, TensorType, Type
+from niro.ir.values import Value, ValueId
 
 __all__ = [
     "Add",

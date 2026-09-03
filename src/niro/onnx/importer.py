@@ -52,7 +52,7 @@ def _import_forward(ctx: Ctx, module: ModuleBuilder) -> ir.Function:
     assert all(input_names)
     assert output_names is not None
 
-    block = fn.region().block(fn.ir.type.inputs)
+    block = fn.region().first_block()
 
     value_table = OnnxValueTable()
     value_table.define_many(
