@@ -22,7 +22,8 @@ class InstalledCli:
             capture_output=True,
             check=True,
         )
-        return result.stdout.decode()
+        # Normalize Windows CLI output to match the LF-based test fixtures.
+        return result.stdout.decode().replace("\r\n", "\n")
 
 
 def install_cli(project_root: Path, root: Path) -> InstalledCli:
