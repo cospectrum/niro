@@ -52,26 +52,9 @@ You can also inspect a model's entry-point signature:
 niro inspect signature model.onnx
 ```
 
-## Development
+## Contributing
 
-Run the local CI checks with:
-
-```sh
-nix run .#ci
-```
-
-### Style guide
-
-We want the project to remain small, direct, and easy to understand without
-compromising correctness or output quality. When contributing:
-
-- Prefer compact, straightforward design that models the required semantics
-  precisely, and keep the core IR independent of any single frontend or backend.
-- Use type hints throughout Python code and derive redundant information rather
-  than storing it.
-- Establish invariants at construction time, use assertions to check internal
-  invariants, and test meaningful behavior and invariants.
-- Keep documentation concise and introduce concepts before relying on them.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 [GIMPLE]: https://gcc.gnu.org/onlinedocs/gccint/GIMPLE.html
 [MLIR]: https://mlir.llvm.org/
