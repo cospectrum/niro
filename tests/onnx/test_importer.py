@@ -352,8 +352,6 @@ def _normalize_attribute(value: object) -> ir.AttributeValue:
 
 
 def test_domains_match_latest_onnx_schema_registry() -> None:
-    registered_domains = {
-        schema.domain for schema in onnx.defs.get_all_schemas()
-    }
+    registered_domains = {schema.domain for schema in onnx.defs.get_all_schemas()}
 
     assert set(_ONNX_DOMAINS) == registered_domains

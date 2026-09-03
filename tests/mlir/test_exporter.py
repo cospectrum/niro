@@ -96,9 +96,7 @@ def test_lowers_static_transpose() -> None:
 def test_lowers_if_and_yield() -> None:
     condition = ir.Value(ir.ValueId(0), ir.ScalarType.BOOL)
     result = ir.Value(ir.ValueId(1), ir.ScalarType.BOOL)
-    branch = ir.Region(
-        [ir.Block(operations=[ir.Yield(operands=(condition,))])]
-    )
+    branch = ir.Region([ir.Block(operations=[ir.Yield(operands=(condition,))])])
     function = ir.Function(
         name="model",
         type=ir.FunctionType(

@@ -10,7 +10,6 @@ from niro.builder import BlockBuilder, FunctionBuilder, ModuleBuilder
 from .op_type import OnnxOpType
 from .value_table import OnnxValueName, OnnxValueTable
 
-
 _ONNX_DOMAINS = (
     "",
     "ai.onnx.ml",

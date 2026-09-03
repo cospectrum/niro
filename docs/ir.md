@@ -182,7 +182,17 @@ Global and function names share a namespace and must be unique within a module.
 
 ```python
 type Op = (
-    Const | GetGlobal | Transpose | Add | Mul | MatMul | Call | Return | Yield | If | UnknownOp
+    Const
+    | GetGlobal
+    | Transpose
+    | Add
+    | Mul
+    | MatMul
+    | Call
+    | Return
+    | Yield
+    | If
+    | UnknownOp
 )
 ```
 
@@ -329,12 +339,8 @@ regions end with `Yield`, and those yielded values become the `If` results:
 if_op = If(
     results=(result,),
     condition=condition,
-    then_region=Region(
-        blocks=[Block(operations=[Yield(operands=(then_value,))])]
-    ),
-    else_region=Region(
-        blocks=[Block(operations=[Yield(operands=(else_value,))])]
-    ),
+    then_region=Region(blocks=[Block(operations=[Yield(operands=(then_value,))])]),
+    else_region=Region(blocks=[Block(operations=[Yield(operands=(else_value,))])]),
 )
 ```
 
