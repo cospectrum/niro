@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 from niro.ir.ops import Op
 from niro.ir.types import Type
-from niro.ir.values import Attribute, FuncId, Value
+from niro.ir.values import Attributes, Literal, SymbolName, Value
 
 
 @dataclass(slots=True)
@@ -28,35 +28,55 @@ class FunctionType:
 
 @dataclass(slots=True)
 class Function:
-    id: FuncId
-    name: str
+    name: SymbolName
     type: FunctionType
-    # None denotes an external declaration.
     body: Region | None = None
-    attributes: dict[str, Attribute] = field(default_factory=dict)
+
     input_names: tuple[str | None, ...] | None = None
     output_names: tuple[str | None, ...] | None = None
+    attributes: Attributes = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _validate_function(self)
 
     @property
-    def arguments(self) -> tuple[Value, ...]:
-        """Return the entry block arguments of a defined function."""
-        if self.body is None or not self.body.blocks:
-            return ()
-        return self.body.blocks[0].arguments
+    def first_block(self) -> Block | None:
+        if not self.body:
+            return None
+        body = self.body
+        if not body.blocks:
+            return None
+        return body.blocks[0]
+
+
+@dataclass(slots=True)
+class Global:
+    """An immutable, initialized value in the module symbol table."""
+
+    name: SymbolName
+    type: Type
+    initializer: Literal
+    attributes: Attributes = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("global name cannot be empty")
 
 
 @dataclass(slots=True)
 class Module:
     functions: list[Function] = field(default_factory=list)
-    attributes: dict[str, Attribute] = field(default_factory=dict)
+    globals: list[Global] = field(default_factory=list)
+    attributes: Attributes = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        names = [global_.name for global_ in self.globals]
+        names.extend(function.name for function in self.functions)
+        if len(names) != len(set(names)):
+            raise ValueError("module symbol names must be unique")
 
 
 def _validate_function(function: Function) -> None:
-    if function.id < 0:
-        raise ValueError("function ID cannot be negative")
     if not function.name:
         raise ValueError("function name cannot be empty")
     _validate_interface_names("input", function.input_names, len(function.type.inputs))
@@ -66,7 +86,9 @@ def _validate_function(function: Function) -> None:
 
 
 def _validate_interface_names(
-    kind: str, names: tuple[str | None, ...] | None, arity: int
+    kind: str,
+    names: tuple[str | None, ...] | None,
+    arity: int,
 ) -> None:
     if names is None:
         return

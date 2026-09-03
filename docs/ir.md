@@ -71,16 +71,11 @@ including its nested regions. Different functions may reuse the same IDs.
 Function inputs, block inputs, and operation results share the same
 function-level ID namespace.
 
-### `FuncId` and `OpId`
+### `SymbolName`
 
-`FuncId` identifies a function and is unique within its module. `OpId`
-identifies an operation and is unique within its entire function, including
-nested regions. Different modules may reuse function IDs, and different
-functions may reuse operation IDs.
-
-Function names remain the public symbols used for calls and linking; a
-function ID is its internal identity. Function, operation, and value IDs are
-non-negative.
+`SymbolName` names a module-level declaration. Functions and globals share one
+symbol namespace and references to either are resolved by name. Operations are
+unnamed; their SSA results are identified by `ValueId`.
 
 ### `Value`
 
@@ -100,6 +95,7 @@ Niro uses the following hierarchy:
 
 ```text
 Module
+├── Global
 └── Function
     └── Region
         └── Block
@@ -154,7 +150,6 @@ A function has a name, signature, and optional body:
 
 ```python
 external = Function(
-    id=FuncId(0),
     name="print_f32",
     type=FunctionType(inputs=(ScalarType.F32,), outputs=()),
     body=None,
@@ -170,16 +165,16 @@ interface. A present sequence has the same arity as its side of the function
 type. Each position contains either a non-empty name or `None` for an unnamed
 item. These names are metadata and do not replace numeric SSA value IDs.
 
-### `Module`
+### `Global` and `Module`
 
-A module owns the functions in a program and provides the symbol scope used to
-resolve function names:
+A global is an immutable initialized module value:
 
 ```python
-module = Module(functions=[external])
+weight = Global(name="weight", type=weight_type, initializer=weight_data)
+module = Module(globals=[weight], functions=[external])
 ```
 
-Function names must be unique within a module.
+Global and function names share a namespace and must be unique within a module.
 
 ### `Op`
 
@@ -187,7 +182,7 @@ Function names must be unique within a module.
 
 ```python
 type Op = (
-    Const | Transpose | Add | Mul | MatMul | Call | Return | Yield | If | UnknownOp
+    Const | GetGlobal | Transpose | Add | Mul | MatMul | Call | Return | Yield | If | UnknownOp
 )
 ```
 
@@ -246,13 +241,23 @@ supporting its validity rules and lowering behavior.
 
 ```python
 result = Value(ValueId(0), ScalarType.F32)
-constant = Const(id=OpId(0), result=result, literal=2.0)
+constant = Const(result=result, literal=2.0)
 ```
 
 Here, `2.0` is the literal stored in the IR. `result` is the `F32` value used by
 later operations. A constant's literal must match its result type. A tensor
 constant has a static shape and exactly the number of packed bytes implied by
 its shape and element type.
+
+### `GetGlobal`
+
+`GetGlobal` references an immutable module global as an SSA value:
+
+```python
+weight = GetGlobal(name="weight", result=weight_value)
+```
+
+The referenced symbol must name a global and its type must match the result.
 
 ### Arithmetic operations
 
@@ -261,7 +266,7 @@ matrix multiplication. Each consumes two operands and produces one result:
 
 ```python
 result = Value(ValueId(2), ScalarType.F32)
-add = Add(id=OpId(0), result=result, lhs=left, rhs=right)
+add = Add(result=result, lhs=left, rhs=right)
 ```
 
 Arithmetic operands and results have compatible types. `MatMul` operates on
@@ -273,7 +278,6 @@ compatible rank-two tensors; its result shape follows from the operand shapes.
 
 ```python
 transpose = Transpose(
-    id=OpId(0),
     result=result,
     operand=input_value,
     permutation=(1, 0),
@@ -288,7 +292,6 @@ The permutation lists the input dimension used for each result dimension.
 
 ```python
 function_call = Call(
-    id=OpId(0),
     callee="add",
     arguments=(lhs, rhs),
     results=(result,),
@@ -303,7 +306,7 @@ may be a definition or external declaration in the same module.
 `Return` terminates a function and returns zero or more values:
 
 ```python
-return_op = Return(id=OpId(0), operands=(result,))
+return_op = Return(operands=(result,))
 ```
 
 The returned values must match the function's output types.
@@ -314,7 +317,7 @@ The returned values must match the function's output types.
 the region. Unlike `Return`, it does not return from the function:
 
 ```python
-yield_op = Yield(id=OpId(0), operands=(result,))
+yield_op = Yield(operands=(result,))
 ```
 
 ### `If`
@@ -324,14 +327,13 @@ regions end with `Yield`, and those yielded values become the `If` results:
 
 ```python
 if_op = If(
-    id=OpId(0),
     results=(result,),
     condition=condition,
     then_region=Region(
-        blocks=[Block(operations=[Yield(id=OpId(1), operands=(then_value,))])]
+        blocks=[Block(operations=[Yield(operands=(then_value,))])]
     ),
     else_region=Region(
-        blocks=[Block(operations=[Yield(id=OpId(2), operands=(else_value,))])]
+        blocks=[Block(operations=[Yield(operands=(else_value,))])]
     ),
 )
 ```
@@ -346,7 +348,6 @@ used outside directly.
 
 ```python
 unknown = UnknownOp(
-    id=OpId(0),
     name="onnx.LeakyRelu",
     operands=(input_value,),
     results=(result,),
@@ -370,13 +371,12 @@ result = Value(ValueId(2), ScalarType.F32)
 entry = Block(
     arguments=(lhs, rhs),
     operations=[
-        Add(id=OpId(0), result=result, lhs=lhs, rhs=rhs),
-        Return(id=OpId(1), operands=(result,)),
+        Add(result=result, lhs=lhs, rhs=rhs),
+        Return(operands=(result,)),
     ],
 )
 
 add = Function(
-    id=FuncId(0),
     name="add",
     type=FunctionType(
         inputs=(ScalarType.F32, ScalarType.F32),
@@ -390,9 +390,9 @@ module = Module(functions=[add])
 
 ## Well-formed IR
 
-A Niro module has unique function names and function IDs. Within each function,
-operation IDs and value IDs are unique, operands refer to visible definitions,
-and uses obey SSA dominance.
+A Niro module has unique symbol names across globals and functions. Within each
+function, value IDs are unique, operands refer to visible definitions, and uses
+obey SSA dominance.
 
 Tensor dimensions are non-negative. Function inputs and returns match their
 signatures. Operation operands and results have compatible types and shapes,

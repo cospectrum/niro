@@ -5,6 +5,11 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass
 
+type Type = ScalarType | TensorType
+
+type Dimension = int | None
+type Shape = tuple[Dimension, ...]
+
 
 class ScalarType(enum.Enum):
     BOOL = "bool"
@@ -24,25 +29,23 @@ class ScalarType(enum.Enum):
         }[self]
 
 
-type Dimension = int | None
-type Shape = tuple[Dimension, ...]
-
-
 @dataclass(frozen=True, slots=True)
 class TensorType:
     element_type: ScalarType
     # None represents an unranked tensor; () represents a rank-zero tensor.
     shape: Shape | None
 
+    @property
+    def rank(self) -> int | None:
+        if self.shape is None:
+            return None
+        return len(self.shape)
+
     def __post_init__(self) -> None:
-        _validate_tensor_type(self)
-
-
-type Type = ScalarType | TensorType
-
-
-def _validate_tensor_type(tensor_type: TensorType) -> None:
-    if tensor_type.shape is None:
-        return
-    if any(dimension is not None and dimension < 0 for dimension in tensor_type.shape):
-        raise ValueError("tensor dimensions cannot be negative")
+        if self.shape is None:
+           return
+        for dim in self.shape:
+           if dim is None:
+               continue
+           if dim < 0:
+               raise ValueError("tensor dimension cannot be negative")

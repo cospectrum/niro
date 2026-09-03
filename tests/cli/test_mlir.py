@@ -40,7 +40,7 @@ def test_emits_mlir_to_stdout_from_onnx_file(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert "builtin.module" in result.stdout
-    assert "func.func public @identity" in result.stdout
+    assert "func.func @identity" in result.stdout
 
 
 def test_emits_mlir_to_file(tmp_path: Path) -> None:
@@ -55,7 +55,7 @@ def test_emits_mlir_to_file(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert result.stdout == ""
-    assert "func.func public @identity" in output_path.read_text()
+    assert "func.func @identity" in output_path.read_text()
 
 
 def test_reads_onnx_from_implicit_or_explicit_stdin() -> None:

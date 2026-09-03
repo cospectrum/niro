@@ -1,66 +1,240 @@
-"""Import ONNX models into Niro IR."""
-
-from __future__ import annotations
-
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import cast
 
 import onnx
-from onnx import numpy_helper
 
 from niro import ir
-from niro.builder import BlockBuilder, ModuleBuilder
-from niro.onnx.op_type import OnnxOpType
+from niro.builder import BlockBuilder, FunctionBuilder, ModuleBuilder
 
-type OnnxValueName = str
+from .op_type import OnnxOpType
+from .value_table import OnnxValueName, OnnxValueTable
 
 
-@dataclass(slots=True)
+_ONNX_DOMAINS = (
+    "",
+    "ai.onnx.ml",
+    "ai.onnx.preview",
+    "ai.onnx.preview.training",
+)
+
+
+@dataclass(frozen=True)
 class Ctx:
     graph: onnx.GraphProto
-    block: BlockBuilder
-    types: dict[OnnxValueName, ir.Type]
-    values: dict[OnnxValueName, ir.Value]
+    weights: Mapping[OnnxValueName, ir.Global]
+    types: Mapping[OnnxValueName, ir.Type]
 
 
 def import_onnx(onnx_model: onnx.ModelProto) -> ir.Module:
-    """Import a single ONNX graph as a Niro entry-point function."""
     graph = onnx_model.graph
-    types = _collect_types(graph)
     module = ModuleBuilder()
-    initializer_names = {initializer.name for initializer in graph.initializer}
-    inputs = [value for value in graph.input if value.name not in initializer_names]
-    function = module.func(
-        name=graph.name or "main",
-        arg_types=[_lookup_type(types, value.name) for value in inputs],
-        ret_types=[_lookup_type(types, value.name) for value in graph.output],
-        input_names=[value.name for value in inputs],
-        output_names=[value.name for value in graph.output],
-    )
+    weights = _import_initializers(graph, module)
     ctx = Ctx(
         graph=graph,
-        block=function.entry,
-        types=types,
-        values={},
+        weights=weights,
+        types=_collect_types(graph),
     )
-    ctx.values.update(
-        (value_info.name, argument)
-        for value_info, argument in zip(inputs, function.args, strict=True)
-    )
-
-    for initializer in graph.initializer:
-        initializer_type = _tensor_type(initializer.data_type, tuple(initializer.dims))
-        ctx.values[initializer.name] = ctx.block.tensor(
-            data=_initializer_data(initializer),
-            result_type=initializer_type,
-        )
-    for node in graph.node:
-        _import_node(ctx, node)
-
-    ctx.block.return_(
-        *(_lookup_value(ctx.values, value.name) for value in graph.output)
-    )
-    module.set_entry_point(function)
+    _import_forward(ctx, module)
     return module.ir
+
+
+def node_name(node: onnx.NodeProto) -> str:
+    """Return the normalized node name for an ONNX operation."""
+    domain = node.domain or "onnx"
+    return f"{domain}.{node.op_type}"
+
+
+def _import_forward(ctx: Ctx, module: ModuleBuilder) -> ir.Function:
+    fn = _declare_entry_point(ctx.graph, module)
+    input_names = fn.ir.input_names
+    output_names = fn.ir.output_names
+    assert input_names is not None
+    assert all(input_names)
+    assert output_names is not None
+
+    block = fn.region().block(fn.ir.type.inputs)
+
+    value_table = OnnxValueTable()
+    value_table.define_many(
+        (cast(str, name) for name in input_names),
+        block.ir.arguments,
+    )
+    for node in ctx.graph.node:
+        operands = []
+        for name in node.input:
+            assert name
+            if name in value_table:
+                pass
+            elif name in ctx.weights:
+                value = block.get_global(ctx.weights[name])
+                value_table.define(name, value)
+            else:
+                raise ValueError(
+                    f"could not resolve ONNX value {name!r} "
+                    f"used as an operand by node {node_name(node)!r}"
+                )
+            operands.append(value_table.lookup(name))
+
+        result = _import_node(ctx, block, node, operands)
+        results = (result,) if isinstance(result, ir.Value) else result
+        value_table.define_many(node.output, results)
+
+    outputs = [value_table.lookup(cast(str, name)) for name in output_names]
+    for output, ty in zip(outputs, fn.ir.type.outputs, strict=True):
+        assert output.type == ty
+
+    block.return_(*outputs)
+    return fn.ir
+
+
+def _declare_entry_point(
+    graph: onnx.GraphProto,
+    module: ModuleBuilder,
+) -> FunctionBuilder:
+    initializer_names = {t.name for t in graph.initializer}
+    pb_inputs = [val for val in graph.input if val.name not in initializer_names]
+    pb_outputs = [val for val in graph.output]
+
+    input_types = tuple(_value_type(val) for val in pb_inputs)
+    output_types = tuple(_value_type(val) for val in pb_outputs)
+    input_names = [val.name for val in pb_inputs]
+    output_names = [val.name for val in pb_outputs]
+    return module.function(
+        name=graph.name,
+        type=ir.FunctionType(inputs=input_types, outputs=output_types),
+        input_names=input_names,
+        output_names=output_names,
+    )
+
+
+def _import_node(
+    ctx: Ctx,
+    block: BlockBuilder,
+    node: onnx.NodeProto,
+    operands: Sequence[ir.Value],
+) -> ir.Value | Sequence[ir.Value]:
+    if node.domain not in _ONNX_DOMAINS:
+        return _import_unknown_node(ctx, block, node, operands)
+
+    match node.op_type:
+        case OnnxOpType.Add:
+            lhs, rhs = operands
+            return block.add(lhs, rhs)
+        case OnnxOpType.Mul:
+            lhs, rhs = operands
+            return block.mul(lhs, rhs)
+        case OnnxOpType.MatMul:
+            lhs, rhs = operands
+            return block.matmul(lhs, rhs)
+        case OnnxOpType.Transpose:
+            return _import_transpose(block, node, operands)
+        case _:
+            return _import_unknown_node(ctx, block, node, operands)
+
+
+def _import_transpose(
+    block: BlockBuilder,
+    node: onnx.NodeProto,
+    operands: Sequence[ir.Value],
+) -> ir.Value:
+    (operand,) = operands
+    attributes = {attribute.name: attribute for attribute in node.attribute}
+    if "perm" in attributes:
+        raw_permutation = onnx.helper.get_attribute_value(attributes["perm"])
+    else:
+        assert isinstance(operand.type, ir.TensorType)
+        rank = operand.type.rank
+        if rank is None:
+            raise ValueError("cannot infer the default Transpose permutation")
+        raw_permutation = reversed(range(rank))
+    permutation = tuple(int(index) for index in raw_permutation)
+    return block.transpose(operand, permutation)
+
+
+def _import_unknown_node(
+    ctx: Ctx,
+    block: BlockBuilder,
+    node: onnx.NodeProto,
+    operands: Sequence[ir.Value],
+) -> Sequence[ir.Value]:
+    return block.unknown_op(
+        name=node_name(node),
+        operands=operands,
+        result_types=[ctx.types[name] for name in node.output],
+        attributes={attr.name: _attribute_value(attr) for attr in node.attribute},
+    )
+
+
+def _import_initializers(
+    graph: onnx.GraphProto,
+    module: ModuleBuilder,
+) -> dict[OnnxValueName, ir.Global]:
+    for t in graph.initializer:
+        ty = _tensor_type(t)
+        val = _tensor_data(t)
+        module.global_(t.name, ty, val)
+    globals = module.ir.globals
+    assert len(globals) >= len(graph.initializer)
+    sym_table = {global_.name: global_ for global_ in globals}
+    return sym_table
+
+
+def _attribute_value(attr: onnx.AttributeProto) -> ir.AttributeValue:
+    value = onnx.helper.get_attribute_value(attr)
+    if isinstance(value, (bool, int, float, str, bytes)) or value is None:
+        return value
+    if not isinstance(value, Iterable):
+        raise NotImplementedError(
+            f"unsupported ONNX attribute {attr.name!r} on an unknown operation"
+        )
+    vals = []
+    for el in value:
+        assert isinstance(el, (bool, int, float, str, bytes)) or el is None
+        vals.append(el)
+    return tuple(vals)
+
+
+def _value_type(value_info: onnx.ValueInfoProto) -> ir.TensorType:
+    if not value_info.type.HasField("tensor_type"):
+        raise NotImplementedError(f"ONNX value {value_info.name!r} is not a tensor")
+    tensor_type = value_info.type.tensor_type
+    if tensor_type.HasField("shape"):
+        shape = tuple(
+            dimension.dim_value if dimension.HasField("dim_value") else None
+            for dimension in tensor_type.shape.dim
+        )
+    else:
+        shape = None
+    return ir.TensorType(_scalar_type(tensor_type.elem_type), shape)
+
+
+def _tensor_data(proto: onnx.TensorProto) -> bytes:
+    array = onnx.numpy_helper.to_array(proto)
+    little_endian_dtype = array.dtype.newbyteorder("<")
+    return array.astype(little_endian_dtype, copy=False).tobytes(order="C")
+
+
+def _tensor_type(proto: onnx.TensorProto) -> ir.TensorType:
+    scalar_type = _scalar_type(proto.data_type)
+    return ir.TensorType(
+        element_type=scalar_type,
+        shape=tuple(proto.dims),
+    )
+
+
+def _scalar_type(proto: onnx.TensorProto.DataType | int) -> ir.ScalarType:
+    scalar_types: dict[int, ir.ScalarType] = {
+        onnx.TensorProto.BOOL: ir.ScalarType.BOOL,
+        onnx.TensorProto.INT32: ir.ScalarType.I32,
+        onnx.TensorProto.INT64: ir.ScalarType.I64,
+        onnx.TensorProto.FLOAT: ir.ScalarType.F32,
+        onnx.TensorProto.DOUBLE: ir.ScalarType.F64,
+    }
+    try:
+        return scalar_types[proto]
+    except KeyError:
+        raise NotImplementedError(f"unsupported ONNX data type: {proto}") from None
 
 
 def _collect_types(graph: onnx.GraphProto) -> dict[OnnxValueName, ir.Type]:
@@ -70,189 +244,3 @@ def _collect_types(graph: onnx.GraphProto) -> dict[OnnxValueName, ir.Type]:
         *graph.output,
     )
     return {value.name: _value_type(value) for value in onnx_values}
-
-
-def _import_node(
-    ctx: Ctx,
-    node: onnx.NodeProto,
-) -> None:
-    operands = [_lookup_value(ctx.values, name) for name in node.input]
-    if node.domain not in ("", "ai.onnx"):
-        _import_unknown_node(ctx, node, operands)
-        return
-
-    match node.op_type:
-        case OnnxOpType.Add:
-            lhs, rhs = _require_two_inputs(node, operands)
-            _record_output(
-                ctx,
-                node,
-                ctx.block.add(lhs, rhs),
-            )
-        case OnnxOpType.Mul:
-            lhs, rhs = _require_two_inputs(node, operands)
-            _record_output(
-                ctx,
-                node,
-                ctx.block.mul(lhs, rhs),
-            )
-        case OnnxOpType.MatMul:
-            lhs, rhs = _require_two_inputs(node, operands)
-            _record_output(
-                ctx,
-                node,
-                ctx.block.matmul(lhs, rhs),
-            )
-        case OnnxOpType.Transpose:
-            if len(operands) != 1:
-                raise ValueError("Transpose must have exactly one input")
-            attributes = {attribute.name: attribute for attribute in node.attribute}
-            raw_permutation = (
-                onnx.helper.get_attribute_value(attributes["perm"])
-                if "perm" in attributes
-                else reversed(range(_require_known_rank(operands[0])))
-            )
-            permutation = tuple(int(index) for index in raw_permutation)
-            _record_output(
-                ctx,
-                node,
-                ctx.block.transpose(operands[0], permutation),
-            )
-        case _:
-            _import_unknown_node(ctx, node, operands)
-
-
-def _import_unknown_node(
-    ctx: Ctx,
-    node: onnx.NodeProto,
-    operands: list[ir.Value],
-) -> None:
-    if any(not name for name in node.output):
-        raise NotImplementedError(
-            f"optional outputs are not supported for {node.op_type}"
-        )
-    results = ctx.block.unknown(
-        name=operation_name(node),
-        operands=operands,
-        result_types=[_lookup_type(ctx.types, name) for name in node.output],
-        attributes={
-            attribute.name: _attribute(attribute) for attribute in node.attribute
-        },
-    )
-    ctx.values.update(zip(node.output, results, strict=True))
-
-
-def _record_output(
-    ctx: Ctx,
-    node: onnx.NodeProto,
-    niro_value: ir.Value,
-) -> None:
-    if len(node.output) != 1 or not node.output[0]:
-        raise ValueError(f"{node.op_type} must have exactly one output")
-    ctx.values[node.output[0]] = niro_value
-
-
-def _lookup_value(
-    values: dict[OnnxValueName, ir.Value],
-    onnx_name: OnnxValueName,
-) -> ir.Value:
-    try:
-        return values[onnx_name]
-    except KeyError:
-        raise ValueError(f"unknown ONNX value: {onnx_name!r}") from None
-
-
-def _lookup_type(
-    types: dict[OnnxValueName, ir.Type],
-    onnx_name: OnnxValueName,
-) -> ir.Type:
-    try:
-        return types[onnx_name]
-    except KeyError:
-        raise ValueError(f"ONNX value has no type information: {onnx_name!r}") from None
-
-
-def _value_type(
-    value_info: onnx.ValueInfoProto,
-) -> ir.TensorType:
-    if not value_info.type.HasField("tensor_type"):
-        raise NotImplementedError(f"ONNX value {value_info.name!r} is not a tensor")
-    tensor_type = value_info.type.tensor_type
-    if not tensor_type.HasField("shape"):
-        shape = None
-    else:
-        shape = tuple(
-            dimension.dim_value if dimension.HasField("dim_value") else None
-            for dimension in tensor_type.shape.dim
-        )
-    return _tensor_type(tensor_type.elem_type, shape)
-
-
-def _tensor_type(
-    element_type: int,
-    shape: ir.Shape | None,
-) -> ir.TensorType:
-    scalar_types = {
-        onnx.TensorProto.BOOL: ir.ScalarType.BOOL,
-        onnx.TensorProto.INT32: ir.ScalarType.I32,
-        onnx.TensorProto.INT64: ir.ScalarType.I64,
-        onnx.TensorProto.FLOAT: ir.ScalarType.F32,
-        onnx.TensorProto.DOUBLE: ir.ScalarType.F64,
-    }
-    try:
-        scalar_type = scalar_types[element_type]
-    except KeyError:
-        raise NotImplementedError(
-            f"unsupported ONNX tensor element type: {element_type}"
-        ) from None
-    return ir.TensorType(element_type=scalar_type, shape=shape)
-
-
-def _initializer_data(initializer: onnx.TensorProto) -> bytes:
-    array = numpy_helper.to_array(initializer)
-    little_endian_dtype = array.dtype.newbyteorder("<")
-    return array.astype(little_endian_dtype, copy=False).tobytes(order="C")
-
-
-def operation_name(node: onnx.NodeProto) -> str:
-    """Return the normalized Niro name for an ONNX node operation."""
-    domain = "onnx" if node.domain in ("", "ai.onnx") else node.domain
-    return f"{domain}.{node.op_type}"
-
-
-def _attribute(
-    attribute: onnx.AttributeProto,
-) -> ir.Attribute:
-    value = onnx.helper.get_attribute_value(attribute)
-    if isinstance(value, (bool, int, float, str, bytes)) or value is None:
-        return value
-    if isinstance(value, (list, tuple)):
-        return tuple(_attribute_element(element) for element in value)
-    raise NotImplementedError(
-        f"unsupported ONNX attribute {attribute.name!r} on an unknown operation"
-    )
-
-
-def _attribute_element(value: object) -> ir.Attribute:
-    if isinstance(value, (bool, int, float, str, bytes)) or value is None:
-        return value
-    raise NotImplementedError("unsupported value in an ONNX attribute sequence")
-
-
-def _require_two_inputs(
-    node: onnx.NodeProto,
-    operands: list[ir.Value],
-) -> tuple[ir.Value, ir.Value]:
-    if len(operands) != 2:
-        raise ValueError(f"{node.op_type} must have exactly two inputs")
-    return operands[0], operands[1]
-
-
-def _require_known_rank(value: ir.Value) -> int:
-    match value.type:
-        case ir.TensorType(shape=shape) if shape is not None:
-            return len(shape)
-        case ir.TensorType(shape=None):
-            raise ValueError("cannot infer the default Transpose permutation")
-        case _:
-            raise TypeError("Transpose input must be a tensor")

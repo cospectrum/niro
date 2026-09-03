@@ -1,4 +1,4 @@
-"""Text output for MLIR modules."""
+"""Format and write textual MLIR modules."""
 
 from io import StringIO
 from os import PathLike
@@ -29,4 +29,6 @@ def write_mlir(
 
 
 def _print_mlir(module: builtin.ModuleOp, stream: TextIO) -> None:
-    Printer(stream=stream).print_op(module)
+    printer = Printer(stream=stream)
+    printer.print_op(module)
+    printer.print_metadata([builtin.Builtin])

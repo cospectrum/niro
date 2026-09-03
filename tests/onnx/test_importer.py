@@ -8,10 +8,11 @@ import pytest
 from onnx import TensorProto, helper
 
 from niro import ir
-from niro.onnx import OnnxOpType, import_onnx, operation_name
+from niro.onnx import OnnxOpType, import_onnx
+from niro.onnx.importer import _ONNX_DOMAINS, node_name
 
 
-def tensor(
+def onnx_tensor(
     name: str,
     shape: list[int],
     element_type: int = TensorProto.FLOAT,
@@ -61,28 +62,19 @@ def one_node_case(
             **attributes,
         ),
         inputs=tuple(
-            tensor(name, list(shape), element_type)
+            onnx_tensor(name, list(shape), element_type)
             for name, shape, element_type in zip(
                 input_names, input_shapes, input_types, strict=True
             )
         ),
         outputs=tuple(
-            tensor(name, list(shape), element_type)
+            onnx_tensor(name, list(shape), element_type)
             for name, shape, element_type in zip(
                 output_names, output_shapes, output_types, strict=True
             )
         ),
         expected_op=expected_op,
     )
-
-
-@pytest.mark.parametrize(
-    ("domain", "expected"),
-    [("", "onnx.Add"), ("ai.onnx", "onnx.Add"), ("custom", "custom.Add")],
-)
-def test_operation_name_qualifies_domain(domain: str, expected: str) -> None:
-    node = helper.make_node(OnnxOpType.Add, [], [], domain=domain)
-    assert operation_name(node) == expected
 
 
 @pytest.mark.parametrize(
@@ -150,19 +142,20 @@ def test_imports_single_node_graph(case: OneNodeCase) -> None:
 
     function = module.functions[0]
     assert function.body is not None
-    operation, return_ = function.body.blocks[0].operations
+    (block,) = function.body.blocks
+    operation, return_ = block.operations
     assert isinstance(operation, case.expected_op)
     assert isinstance(return_, ir.Return)
     assert function.name == "model"
     assert function.input_names == tuple(value.name for value in case.inputs)
     assert function.output_names == tuple(value.name for value in case.outputs)
-    assert [value.id for value in function.arguments] == [
+    assert [value.id for value in block.arguments] == [
         ir.ValueId(index) for index in range(len(case.inputs))
     ]
     values = dict(
         zip(
             (value.name for value in case.inputs),
-            function.arguments,
+            block.arguments,
             strict=True,
         )
     )
@@ -176,7 +169,7 @@ def test_imports_single_node_graph(case: OneNodeCase) -> None:
     ]
     assert tuple(result.type for result in results) == function.type.outputs
     assert return_.operands == results
-    assert module.attributes == {"entry_point": "model"}
+    assert module.attributes == {}
 
 
 def test_imports_initializer_as_tensor_constant() -> None:
@@ -195,8 +188,8 @@ def test_imports_initializer_as_tensor_constant() -> None:
             )
         ],
         name="scale",
-        inputs=[tensor("x", [2])],
-        outputs=[tensor("result", [2])],
+        inputs=[onnx_tensor("x", [2])],
+        outputs=[onnx_tensor("result", [2])],
         initializer=[weight],
     )
 
@@ -204,22 +197,26 @@ def test_imports_initializer_as_tensor_constant() -> None:
 
     function = module.functions[0]
     assert function.body is not None
-    constant, multiply, return_ = function.body.blocks[0].operations
-    assert isinstance(constant, ir.Const)
+    (global_,) = module.globals
+    (block,) = function.body.blocks
+    get_global, multiply, return_ = block.operations
+    assert isinstance(get_global, ir.GetGlobal)
     assert isinstance(multiply, ir.Mul)
     assert isinstance(return_, ir.Return)
-    assert constant == ir.Const(
-        id=ir.OpId(0),
-        result=ir.Value(
-            id=ir.ValueId(1),
-            type=ir.TensorType(element_type=ir.ScalarType.F32, shape=(2,)),
-        ),
-        literal=struct.pack("<2f", 2.0, 3.0),
+    tensor_type = ir.TensorType(element_type=ir.ScalarType.F32, shape=(2,))
+    assert global_ == ir.Global(
+        name="weight",
+        type=tensor_type,
+        initializer=struct.pack("<2f", 2.0, 3.0),
+    )
+    assert get_global == ir.GetGlobal(
+        name="weight",
+        result=ir.Value(id=ir.ValueId(1), type=tensor_type),
     )
     (result,) = assert_imported_node(
         graph.node[0],
         multiply,
-        {"x": function.arguments[0], "weight": constant.result},
+        {"x": block.arguments[0], "weight": get_global.result},
     )
     assert result.id == ir.ValueId(2)
     assert return_.operands == (result,)
@@ -241,24 +238,25 @@ def test_imports_matmul_and_transpose() -> None:
             ),
         ],
         name="linear",
-        inputs=[tensor("lhs", [2, 3]), tensor("rhs", [4, 3])],
-        outputs=[tensor("result", [2, 4])],
-        value_info=[tensor("rhs_t", [3, 4])],
+        inputs=[onnx_tensor("lhs", [2, 3]), onnx_tensor("rhs", [4, 3])],
+        outputs=[onnx_tensor("result", [2, 4])],
+        value_info=[onnx_tensor("rhs_t", [3, 4])],
     )
 
     module = import_onnx(helper.make_model(graph=graph))
 
     function = module.functions[0]
     assert function.body is not None
-    transpose, matmul, return_ = function.body.blocks[0].operations
+    (block,) = function.body.blocks
+    transpose, matmul, return_ = block.operations
     assert isinstance(transpose, ir.Transpose)
     assert isinstance(matmul, ir.MatMul)
     assert isinstance(return_, ir.Return)
-    assert [value.id for value in function.arguments] == [
+    assert [value.id for value in block.arguments] == [
         ir.ValueId(0),
         ir.ValueId(1),
     ]
-    values = dict(zip(("lhs", "rhs"), function.arguments, strict=True))
+    values = dict(zip(("lhs", "rhs"), block.arguments, strict=True))
     (transpose_result,) = assert_imported_node(graph.node[0], transpose, values)
     (matmul_result,) = assert_imported_node(graph.node[1], matmul, values)
     assert transpose_result.id == ir.ValueId(2)
@@ -285,19 +283,20 @@ def test_preserves_node_and_graph_output_order() -> None:
             ),
         ],
         name="sum_and_product",
-        inputs=[tensor("lhs", [2]), tensor("rhs", [2])],
-        outputs=[tensor("product", [2]), tensor("sum", [2])],
+        inputs=[onnx_tensor("lhs", [2]), onnx_tensor("rhs", [2])],
+        outputs=[onnx_tensor("product", [2]), onnx_tensor("sum", [2])],
     )
 
     module = import_onnx(helper.make_model(graph=graph))
 
     function = module.functions[0]
     assert function.body is not None
-    add, multiply, return_ = function.body.blocks[0].operations
+    (block,) = function.body.blocks
+    add, multiply, return_ = block.operations
     assert isinstance(add, ir.Add)
     assert isinstance(multiply, ir.Mul)
     assert isinstance(return_, ir.Return)
-    values = dict(zip(("lhs", "rhs"), function.arguments, strict=True))
+    values = dict(zip(("lhs", "rhs"), block.arguments, strict=True))
     (sum_,) = assert_imported_node(graph.node[0], add, values)
     (product,) = assert_imported_node(graph.node[1], multiply, values)
     assert sum_.id == ir.ValueId(2)
@@ -311,12 +310,12 @@ def assert_imported_node(
     values: dict[str, ir.Value],
 ) -> tuple[ir.Value, ...]:
     """Compare one imported operation with its source node and bind outputs."""
-    normalized = as_onnx_unknown_op(operation, operation_name(node))
+    normalized = as_onnx_unknown_op(operation, node_name(node))
     attributes = {
         attribute.name: _normalize_attribute(onnx.helper.get_attribute_value(attribute))
         for attribute in node.attribute
     }
-    assert normalized.name == operation_name(node)
+    assert normalized.name == node_name(node)
     assert normalized.operands == tuple(values[name] for name in node.input)
     assert normalized.attributes == attributes
     assert len(normalized.results) == len(node.output)
@@ -326,7 +325,7 @@ def assert_imported_node(
 
 def as_onnx_unknown_op(operation: ir.Op, name: str) -> ir.UnknownOp:
     """Project a node-backed Niro operation into its generic ONNX form."""
-    attributes: dict[str, ir.Attribute]
+    attributes: dict[str, ir.AttributeValue]
     match operation:
         case ir.Add() | ir.Mul() | ir.MatMul():
             attributes = {}
@@ -337,7 +336,6 @@ def as_onnx_unknown_op(operation: ir.Op, name: str) -> ir.UnknownOp:
         case _:
             raise TypeError(f"operation has no ONNX node representation: {operation!r}")
     return ir.UnknownOp(
-        id=operation.id,
         name=name,
         operands=operation.get_operands(),
         results=operation.get_results(),
@@ -345,9 +343,17 @@ def as_onnx_unknown_op(operation: ir.Op, name: str) -> ir.UnknownOp:
     )
 
 
-def _normalize_attribute(value: object) -> ir.Attribute:
+def _normalize_attribute(value: object) -> ir.AttributeValue:
     if isinstance(value, (bool, int, float, str, bytes)) or value is None:
         return value
     if isinstance(value, (list, tuple)):
         return tuple(_normalize_attribute(element) for element in value)
     raise TypeError(f"unsupported test attribute: {value!r}")
+
+
+def test_domains_match_latest_onnx_schema_registry() -> None:
+    registered_domains = {
+        schema.domain for schema in onnx.defs.get_all_schemas()
+    }
+
+    assert set(_ONNX_DOMAINS) == registered_domains

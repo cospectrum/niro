@@ -6,22 +6,20 @@ from niro.builder import ModuleBuilder
 from niro.mlir import export_mlir, format_mlir
 
 
-def test_lowers_public_entry_point_and_tensor_add() -> None:
+def test_lowers_tensor_add() -> None:
     tensor_type = ir.TensorType(element_type=ir.ScalarType.F32, shape=(2, 2))
     module = ModuleBuilder()
-    function = module.func(
+    function = module.function(
         name="model",
-        arg_types=[tensor_type, tensor_type],
-        ret_types=[tensor_type],
+        type=ir.FunctionType((tensor_type, tensor_type), (tensor_type,)),
     )
-    result = function.entry.add(*function.args)
-    function.entry.return_(result)
-    module.set_entry_point(function)
+    block = function.region().block((tensor_type, tensor_type))
+    result = block.add(*block.ir.arguments)
+    block.return_(result)
 
     text = format_mlir(export_mlir(module.ir))
 
-    assert "func.func public @model" in text
-    assert "attributes {niro.entry_point}" in text
+    assert "func.func @model" in text
     assert "%2 = arith.addf %0, %1 : tensor<2x2xf32>" in text
     assert "func.return %2 : tensor<2x2xf32>" in text
 
@@ -30,51 +28,49 @@ def test_lowers_tensor_weight_to_private_immutable_global() -> None:
     tensor_type = ir.TensorType(element_type=ir.ScalarType.F32, shape=(2, 2))
     data = bytes(range(16))
     module = ModuleBuilder()
-    function = module.func(
+    function = module.function(
         name="model",
-        arg_types=[tensor_type],
-        ret_types=[tensor_type],
+        type=ir.FunctionType((tensor_type,), (tensor_type,)),
     )
-    weight = function.entry.tensor(data=data, result_type=tensor_type)
-    result = function.entry.matmul(function.args[0], weight)
-    function.entry.return_(result)
-    module.set_entry_point(function)
+    block = function.region().block((tensor_type,))
+    weight = block.tensor(data, tensor_type)
+    result = block.matmul(block.ir.arguments[0], weight)
+    block.return_(result)
 
     lowered = export_mlir(module.ir)
 
     operations = list(lowered.body.block.ops)
     global_ = operations[0]
     assert isinstance(global_, ml_program.GlobalOp)
-    assert isinstance(global_.value, builtin.DenseIntOrFPElementsAttr)
-    assert global_.value.data.data == data
+    assert isinstance(global_.value, builtin.DenseResourceAttr)
     text = format_mlir(lowered)
     assert "ml_program.global private @__niro_model_1" in text
+    assert "dense_resource<__niro_model_1>" in text
+    assert f'__niro_model_1: "0x{data.hex().upper()}"' in text
     assert "ml_program.global_load_const @__niro_model_1" in text
     assert text.index("linalg.fill") < text.index("linalg.matmul")
 
 
 def test_lowers_private_helper_and_call() -> None:
     module = ModuleBuilder()
-    helper = module.func(
+    helper = module.function(
         name="helper",
-        arg_types=[ir.ScalarType.I32],
-        ret_types=[ir.ScalarType.I32],
+        type=ir.FunctionType((ir.ScalarType.I32,), (ir.ScalarType.I32,)),
     )
-    helper.entry.return_(helper.args[0])
-    main = module.func(
+    helper_block = helper.region().block((ir.ScalarType.I32,))
+    helper_block.return_(helper_block.ir.arguments[0])
+    main = module.function(
         name="model",
-        arg_types=[ir.ScalarType.I32],
-        ret_types=[ir.ScalarType.I32],
+        type=ir.FunctionType((ir.ScalarType.I32,), (ir.ScalarType.I32,)),
     )
-    result = main.entry.call(helper, main.args[0])
-    assert isinstance(result, ir.Value)
-    main.entry.return_(result)
-    module.set_entry_point(main)
+    main_block = main.region().block((ir.ScalarType.I32,))
+    (result,) = main_block.call(helper, main_block.ir.arguments)
+    main_block.return_(result)
 
     text = format_mlir(export_mlir(module.ir))
 
-    assert "func.func private @helper" in text
-    assert "func.func public @model" in text
+    assert "func.func @helper" in text
+    assert "func.func @model" in text
     assert "func.call @helper(%0) : (i32) -> i32" in text
 
 
@@ -82,14 +78,13 @@ def test_lowers_static_transpose() -> None:
     input_type = ir.TensorType(element_type=ir.ScalarType.F32, shape=(2, 3))
     output_type = ir.TensorType(element_type=ir.ScalarType.F32, shape=(3, 2))
     module = ModuleBuilder()
-    function = module.func(
+    function = module.function(
         name="model",
-        arg_types=[input_type],
-        ret_types=[output_type],
+        type=ir.FunctionType((input_type,), (output_type,)),
     )
-    result = function.entry.transpose(function.args[0], [1, 0])
-    function.entry.return_(result)
-    module.set_entry_point(function)
+    block = function.region().block((input_type,))
+    result = block.transpose(block.ir.arguments[0], [1, 0])
+    block.return_(result)
 
     text = format_mlir(export_mlir(module.ir))
 
@@ -102,10 +97,9 @@ def test_lowers_if_and_yield() -> None:
     condition = ir.Value(ir.ValueId(0), ir.ScalarType.BOOL)
     result = ir.Value(ir.ValueId(1), ir.ScalarType.BOOL)
     branch = ir.Region(
-        [ir.Block(operations=[ir.Yield(id=ir.OpId(0), operands=(condition,))])]
+        [ir.Block(operations=[ir.Yield(operands=(condition,))])]
     )
     function = ir.Function(
-        id=ir.FuncId(0),
         name="model",
         type=ir.FunctionType(
             inputs=(ir.ScalarType.BOOL,),
@@ -117,22 +111,18 @@ def test_lowers_if_and_yield() -> None:
                     arguments=(condition,),
                     operations=[
                         ir.If(
-                            id=ir.OpId(1),
                             results=(result,),
                             condition=condition,
                             then_region=branch,
                             else_region=branch,
                         ),
-                        ir.Return(id=ir.OpId(2), operands=(result,)),
+                        ir.Return(operands=(result,)),
                     ],
                 )
             ]
         ),
     )
-    module = ir.Module(
-        functions=[function],
-        attributes={"entry_point": "model"},
-    )
+    module = ir.Module(functions=[function])
 
     text = format_mlir(export_mlir(module))
 
@@ -143,11 +133,10 @@ def test_lowers_if_and_yield() -> None:
 
 def test_preserves_metadata_with_niro_namespace() -> None:
     module = ModuleBuilder()
-    function = module.func(name="model")
-    function.function.attributes["note"] = "function"
-    function.entry.return_()
+    function = module.function(name="model", type=ir.FunctionType((), ()))
+    function.ir.attributes["note"] = "function"
+    function.region().block().return_()
     module.ir.attributes["version"] = 1
-    module.set_entry_point(function)
 
     text = format_mlir(export_mlir(module.ir))
 
@@ -157,18 +146,17 @@ def test_preserves_metadata_with_niro_namespace() -> None:
 
 def test_rejects_unknown_operation() -> None:
     module = ModuleBuilder()
-    function = module.func(
+    function = module.function(
         name="model",
-        arg_types=[ir.ScalarType.F32],
-        ret_types=[ir.ScalarType.F32],
+        type=ir.FunctionType((ir.ScalarType.F32,), (ir.ScalarType.F32,)),
     )
-    (result,) = function.entry.unknown(
+    block = function.region().block((ir.ScalarType.F32,))
+    (result,) = block.unknown_op(
         name="onnx.Relu",
-        operands=function.args,
+        operands=block.ir.arguments,
         result_types=[ir.ScalarType.F32],
     )
-    function.entry.return_(result)
-    module.set_entry_point(function)
+    block.return_(result)
 
     with pytest.raises(
         NotImplementedError,
@@ -183,17 +171,16 @@ def test_rejects_dynamic_matmul() -> None:
         shape=(None, 2),
     )
     module = ModuleBuilder()
-    function = module.func(
+    function = module.function(
         name="model",
-        arg_types=[tensor_type, tensor_type],
-        ret_types=[tensor_type],
+        type=ir.FunctionType((tensor_type, tensor_type), (tensor_type,)),
     )
-    result = function.entry.matmul(
-        function.args[0],
-        function.args[1],
+    block = function.region().block((tensor_type, tensor_type))
+    result = block.matmul(
+        block.ir.arguments[0],
+        block.ir.arguments[1],
     )
-    function.entry.return_(result)
-    module.set_entry_point(function)
+    block.return_(result)
 
     with pytest.raises(
         NotImplementedError,

@@ -7,146 +7,122 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, assert_never, cast
 
 from niro.ir.types import ScalarType, TensorType, Type
-from niro.ir.values import Attribute, Literal, OpId, Value
+from niro.ir.values import Attributes, Literal, SymbolName, Value
 
 if TYPE_CHECKING:
-    from niro.ir.program import Region
+    from .program import Region
 
 
-class _OpMixin:
-    """Common, immutable queries supported by every operation."""
+type Op = (
+    Const
+    | GetGlobal
+    | Transpose
+    | Add
+    | Mul
+    | MatMul
+    | Call
+    | Return
+    | Yield
+    | If
+    | UnknownOp
+)
 
+
+@dataclass(frozen=True, slots=True)
+class _BaseOp:
     def get_operands(self) -> tuple[Value, ...]:
         """Return the SSA values consumed by this operation."""
-        return _get_operands(cast("Op", self))
+        return _get_operands(cast(Op, self))
 
     def get_results(self) -> tuple[Value, ...]:
         """Return the SSA values produced by this operation."""
-        return _get_results(cast("Op", self))
+        return _get_results(cast(Op, self))
+
+    def is_terminator(self) -> bool:
+        return _is_terminator(cast(Op, self))
+
+    def __post_init__(self) -> None:
+        _validate_op(cast(Op, self))
 
 
 @dataclass(frozen=True, slots=True)
-class Const(_OpMixin):
-    id: OpId
+class Const(_BaseOp):
     result: Value
     literal: Literal
 
-    def __post_init__(self) -> None:
-        _validate_const(self)
+
+@dataclass(frozen=True, slots=True)
+class GetGlobal(_BaseOp):
+    name: SymbolName
+    result: Value
 
 
 @dataclass(frozen=True, slots=True)
-class Transpose(_OpMixin):
-    id: OpId
+class Transpose(_BaseOp):
     result: Value
     operand: Value
     permutation: tuple[int, ...]
 
-    def __post_init__(self) -> None:
-        _validate_transpose(self)
-
 
 @dataclass(frozen=True, slots=True)
-class Add(_OpMixin):
-    id: OpId
+class Add(_BaseOp):
     result: Value
     lhs: Value
     rhs: Value
 
-    def __post_init__(self) -> None:
-        _validate_add(self)
-
 
 @dataclass(frozen=True, slots=True)
-class Mul(_OpMixin):
-    id: OpId
+class Mul(_BaseOp):
     result: Value
     lhs: Value
     rhs: Value
 
-    def __post_init__(self) -> None:
-        _validate_mul(self)
-
 
 @dataclass(frozen=True, slots=True)
-class MatMul(_OpMixin):
-    id: OpId
+class MatMul(_BaseOp):
     result: Value
     lhs: Value
     rhs: Value
 
-    def __post_init__(self) -> None:
-        _validate_matmul(self)
-
 
 @dataclass(frozen=True, slots=True)
-class Call(_OpMixin):
-    id: OpId
-    callee: str
+class Call(_BaseOp):
+    callee: SymbolName
     arguments: tuple[Value, ...]
     results: tuple[Value, ...]
 
-    def __post_init__(self) -> None:
-        _validate_op_id(self.id)
-
 
 @dataclass(frozen=True, slots=True)
-class Return(_OpMixin):
-    id: OpId
+class Return(_BaseOp):
     operands: tuple[Value, ...] = ()
 
-    def __post_init__(self) -> None:
-        _validate_op_id(self.id)
-
 
 @dataclass(frozen=True, slots=True)
-class Yield(_OpMixin):
-    id: OpId
+class Yield(_BaseOp):
     operands: tuple[Value, ...] = ()
 
-    def __post_init__(self) -> None:
-        _validate_op_id(self.id)
-
 
 @dataclass(frozen=True, slots=True)
-class If(_OpMixin):
-    id: OpId
+class If(_BaseOp):
     results: tuple[Value, ...]
     condition: Value
     then_region: Region
     else_region: Region
 
-    def __post_init__(self) -> None:
-        _validate_op_id(self.id)
-        if self.condition.type is not ScalarType.BOOL:
-            raise TypeError("if condition must be boolean")
-
 
 @dataclass(frozen=True, slots=True)
-class UnknownOp(_OpMixin):
+class UnknownOp(_BaseOp):
     """A structurally valid operation whose semantics are unknown to niro."""
 
-    id: OpId
     name: str
     operands: tuple[Value, ...]
     results: tuple[Value, ...]
-    attributes: dict[str, Attribute] = field(default_factory=dict)
-    regions: tuple[Region, ...] = ()
-
-    def __post_init__(self) -> None:
-        _validate_op_id(self.id)
-        if not self.name:
-            raise ValueError("unknown operation name cannot be empty")
-
-
-type Op = (
-    Const | Transpose | Add | Mul | MatMul | Call | Return | Yield | If | UnknownOp
-)
+    attributes: Attributes = field(default_factory=dict)
 
 
 def _get_operands(op: Op) -> tuple[Value, ...]:
     match op:
-        case Const():
+        case Const() | GetGlobal():
             return ()
         case Transpose(operand=operand):
             return (operand,)
@@ -160,14 +136,13 @@ def _get_operands(op: Op) -> tuple[Value, ...]:
             return (condition,)
         case UnknownOp(operands=operands):
             return operands
-        case _ as unreachable:
-            assert_never(unreachable)
 
 
 def _get_results(op: Op) -> tuple[Value, ...]:
     match op:
         case (
             Const(result=result)
+            | GetGlobal(result=result)
             | Transpose(result=result)
             | Add(result=result)
             | Mul(result=result)
@@ -178,8 +153,99 @@ def _get_results(op: Op) -> tuple[Value, ...]:
             return results
         case Return() | Yield():
             return ()
+
+
+def _is_terminator(op: Op) -> bool:
+    return isinstance(op, (Return, Yield))
+
+
+def _validate_op(op: Op) -> None:
+    result_ids = [val.id for val in op.get_results()]
+    if len(result_ids) != len(set(result_ids)):
+        raise ValueError("operation should produce unique values")
+
+    match op:
+        case Const():
+            _validate_const(op)
+        case GetGlobal(name=name):
+            if not name:
+                raise ValueError("global name cannot be empty")
+        case Transpose():
+            _validate_transpose(op)
+        case Add():
+            _validate_add(op)
+        case Mul():
+            _validate_mul(op)
+        case MatMul():
+            _validate_matmul(op)
+        case Call() | Return() | Yield():
+            pass
+        case If(condition=condition):
+            if condition.type is not ScalarType.BOOL:
+                raise TypeError("if condition must be boolean")
+        case UnknownOp(name=name):
+            if not name:
+                raise ValueError("UnknownOp name cannot be empty")
         case _ as unreachable:
             assert_never(unreachable)
+
+
+def _validate_const(op: Const) -> None:
+    match op.result.type:
+        case ScalarType.BOOL if isinstance(op.literal, bool):
+            pass
+        case ScalarType.I32 | ScalarType.I64 if isinstance(
+            op.literal, int
+        ) and not isinstance(op.literal, bool):
+            pass
+        case ScalarType.F32 | ScalarType.F64 if isinstance(op.literal, float):
+            pass
+        case TensorType(element_type, shape) if (
+            isinstance(op.literal, bytes)
+            and shape is not None
+            and all(dimension is not None for dimension in shape)
+        ):
+            size = math.prod(dimension for dimension in shape if dimension is not None)
+            expected = size * element_type.byte_width
+            if len(op.literal) != expected:
+                raise ValueError(
+                    f"tensor constant has {len(op.literal)} bytes, expected {expected}"
+                )
+        case TensorType():
+            raise TypeError("tensor constant requires packed bytes and a static shape")
+        case _:
+            raise TypeError("constant value does not match its result type")
+
+
+def _validate_transpose(op: Transpose) -> None:
+    expected = transpose_result_type(op.operand.type, op.permutation)
+    if op.result.type != expected:
+        raise TypeError("transpose result type does not match its operands")
+
+
+def _validate_add(op: Add) -> None:
+    _require_matching_numeric_types("add", op.result, op.lhs, op.rhs)
+
+
+def _validate_mul(op: Mul) -> None:
+    _require_matching_numeric_types("mul", op.result, op.lhs, op.rhs)
+
+
+def _validate_matmul(op: MatMul) -> None:
+    if op.result.type != matmul_result_type(op.lhs.type, op.rhs.type):
+        raise TypeError("matmul result type does not match its operands")
+
+
+def _require_matching_numeric_types(
+    operation: str, result: Value, lhs: Value, rhs: Value
+) -> None:
+    if lhs.type != rhs.type or result.type != lhs.type:
+        raise TypeError(f"{operation} operands and result must have the same type")
+    element_type = (
+        lhs.type.element_type if isinstance(lhs.type, TensorType) else lhs.type
+    )
+    if element_type is ScalarType.BOOL:
+        raise TypeError(f"{operation} does not support boolean values")
 
 
 def transpose_result_type(
@@ -210,71 +276,3 @@ def matmul_result_type(lhs: Type, rhs: Type) -> TensorType:
     if lhs_inner is not None and rhs_inner is not None and lhs_inner != rhs_inner:
         raise ValueError("matmul contracting dimensions must match")
     return TensorType(lhs.element_type, (lhs.shape[0], rhs.shape[1]))
-
-
-def _validate_const(op: Const) -> None:
-    _validate_op_id(op.id)
-    match op.result.type:
-        case ScalarType.BOOL if isinstance(op.literal, bool):
-            pass
-        case ScalarType.I32 | ScalarType.I64 if isinstance(
-            op.literal, int
-        ) and not isinstance(op.literal, bool):
-            pass
-        case ScalarType.F32 | ScalarType.F64 if isinstance(op.literal, float):
-            pass
-        case TensorType(element_type, shape) if (
-            isinstance(op.literal, bytes)
-            and shape is not None
-            and all(dimension is not None for dimension in shape)
-        ):
-            size = math.prod(dimension for dimension in shape if dimension is not None)
-            expected = size * element_type.byte_width
-            if len(op.literal) != expected:
-                raise ValueError(
-                    f"tensor constant has {len(op.literal)} bytes, expected {expected}"
-                )
-        case TensorType():
-            raise TypeError("tensor constant requires packed bytes and a static shape")
-        case _:
-            raise TypeError("constant value does not match its result type")
-
-
-def _validate_transpose(op: Transpose) -> None:
-    _validate_op_id(op.id)
-    expected = transpose_result_type(op.operand.type, op.permutation)
-    if op.result.type != expected:
-        raise TypeError("transpose result type does not match its operands")
-
-
-def _validate_add(op: Add) -> None:
-    _validate_op_id(op.id)
-    _require_matching_numeric_types("add", op.result, op.lhs, op.rhs)
-
-
-def _validate_mul(op: Mul) -> None:
-    _validate_op_id(op.id)
-    _require_matching_numeric_types("mul", op.result, op.lhs, op.rhs)
-
-
-def _validate_matmul(op: MatMul) -> None:
-    _validate_op_id(op.id)
-    if op.result.type != matmul_result_type(op.lhs.type, op.rhs.type):
-        raise TypeError("matmul result type does not match its operands")
-
-
-def _validate_op_id(op_id: OpId) -> None:
-    if op_id < 0:
-        raise ValueError("operation ID cannot be negative")
-
-
-def _require_matching_numeric_types(
-    operation: str, result: Value, lhs: Value, rhs: Value
-) -> None:
-    if lhs.type != rhs.type or result.type != lhs.type:
-        raise TypeError(f"{operation} operands and result must have the same type")
-    element_type = (
-        lhs.type.element_type if isinstance(lhs.type, TensorType) else lhs.type
-    )
-    if element_type is ScalarType.BOOL:
-        raise TypeError(f"{operation} does not support boolean values")

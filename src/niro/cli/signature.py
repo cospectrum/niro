@@ -9,9 +9,8 @@ import typer
 from google.protobuf.message import DecodeError
 
 from niro import ir
-from niro.builder import get_entry_point
 from niro.cli.input import InputFormat, load_model, resolve_input_format
-from niro.onnx import import_onnx
+from niro.onnx import inspect_signature as inspect_onnx_signature
 
 LINE_WIDTH = 100
 
@@ -33,8 +32,8 @@ def inspect_signature(
     """Print the model entry-point signature."""
     resolved_format = resolve_input_format(input_path, input_format)
     try:
-        module = import_onnx(load_model(input_path, resolved_format))
-        typer.echo(format_signature(get_entry_point(module)))
+        model = load_model(input_path, resolved_format)
+        typer.echo(format_signature(inspect_onnx_signature(model)))
     except (DecodeError, OSError, TypeError, ValueError, NotImplementedError) as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(code=1) from error

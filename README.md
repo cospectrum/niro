@@ -17,16 +17,10 @@ The Niro IR is described in [docs/ir.md](docs/ir.md).
 
 ## Installation
 
-Install Niro as a command-line tool:
+### CLI
 
 ```sh
-uv tool install niro
-```
-
-Or add it as a library dependency to a project:
-
-```sh
-uv add niro
+uv tool install git+https://github.com/cospectrum/niro.git
 ```
 
 ## Usage
@@ -52,25 +46,10 @@ reading from standard input:
 niro emit mlir --input-format onnx < model.onnx | mlir-opt
 ```
 
-Inspect a model's entry-point signature:
+You can also inspect a model's entry-point signature:
 
 ```sh
 niro inspect signature model.onnx
-```
-
-### Library
-
-Import an ONNX model into Niro IR and lower it to MLIR:
-
-```python
-import onnx
-
-from niro import export_mlir, import_onnx, write_mlir
-
-onnx_model = onnx.load("model.onnx")
-module = import_onnx(onnx_model)
-mlir_module = export_mlir(module)
-write_mlir(mlir_module, "model.mlir")
 ```
 
 ## Development
@@ -86,16 +65,13 @@ nix run .#ci
 We want the project to remain small, direct, and easy to understand without
 compromising correctness or output quality. When contributing:
 
-- Prefer simple designs that model the required semantics precisely over
-  speculative abstractions.
-- Use type hints throughout Python code.
-- Keep the core IR independent of any single frontend or backend.
-- Establish invariants at construction time, derive redundant information, so
-  downstream code can trust constructed values.
-- Keep code compact and minimal without sacrificing clarity or required
-  behavior.
-- Add tests for meaningful behavior and invariants.
-- Keep documentation concise, and try to introduce concepts before relying on them.
+- Prefer compact, straightforward design that models the required semantics
+  precisely, and keep the core IR independent of any single frontend or backend.
+- Use type hints throughout Python code and derive redundant information rather
+  than storing it.
+- Establish invariants at construction time, use assertions to check internal
+  invariants, and test meaningful behavior and invariants.
+- Keep documentation concise and introduce concepts before relying on them.
 
 [GIMPLE]: https://gcc.gnu.org/onlinedocs/gccint/GIMPLE.html
 [MLIR]: https://mlir.llvm.org/

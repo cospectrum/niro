@@ -7,9 +7,8 @@ from typing import NewType
 
 from niro.ir.types import Type
 
-FuncId = NewType("FuncId", int)
-OpId = NewType("OpId", int)
 ValueId = NewType("ValueId", int)
+type SymbolName = str
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,5 +23,9 @@ class Value:
             raise ValueError("value ID cannot be negative")
 
 
-type Attribute = None | bool | int | float | str | bytes | tuple[Attribute, ...]
+type AttributeName = str
+type AttributeValue = (
+    None | bool | int | float | str | bytes | tuple[AttributeValue, ...]
+)
+type Attributes = dict[AttributeName, AttributeValue]
 type Literal = bool | int | float | bytes

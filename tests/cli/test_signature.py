@@ -23,7 +23,6 @@ def function(
     output_names: tuple[str | None, ...] | None = None,
 ) -> ir.Function:
     return ir.Function(
-        id=ir.FuncId(0),
         name="model",
         type=ir.FunctionType(inputs, outputs),
         input_names=input_names,
@@ -122,7 +121,7 @@ def test_wraps_inputs_with_trailing_commas_and_zero_results() -> None:
 def test_one_line_at_exact_boundary() -> None:
     name = "m" * 89
     formatted = format_signature(
-        ir.Function(ir.FuncId(0), name, ir.FunctionType((ir.ScalarType.F32,), ()))
+        ir.Function(name, ir.FunctionType((ir.ScalarType.F32,), ()))
     )
     assert len(formatted) == 100
     assert "\n" not in formatted

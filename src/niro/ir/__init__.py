@@ -4,6 +4,7 @@ from niro.ir.ops import (
     Add,
     Call,
     Const,
+    GetGlobal,
     If,
     MatMul,
     Mul,
@@ -15,31 +16,42 @@ from niro.ir.ops import (
     matmul_result_type,
     transpose_result_type,
 )
-from niro.ir.program import Block, Function, FunctionType, Module, Region
+from niro.ir.program import Block, Function, FunctionType, Global, Module, Region
 from niro.ir.types import Dimension, ScalarType, Shape, TensorType, Type
-from niro.ir.values import Attribute, FuncId, Literal, OpId, Value, ValueId
+from niro.ir.values import (
+    AttributeName,
+    Attributes,
+    AttributeValue,
+    Literal,
+    SymbolName,
+    Value,
+    ValueId,
+)
 
 __all__ = [
     "Add",
-    "Attribute",
+    "AttributeName",
+    "AttributeValue",
+    "Attributes",
     "Block",
     "Call",
     "Const",
     "Dimension",
-    "FuncId",
     "Function",
     "FunctionType",
+    "GetGlobal",
+    "Global",
     "If",
     "Literal",
     "MatMul",
     "Module",
     "Mul",
     "Op",
-    "OpId",
     "Region",
     "Return",
     "ScalarType",
     "Shape",
+    "SymbolName",
     "TensorType",
     "Transpose",
     "Type",
