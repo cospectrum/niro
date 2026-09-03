@@ -40,6 +40,12 @@ class Ctx:
 
 
 class ModuleBuilder:
+    """Build a module.
+
+    Attributes:
+        ir: The `ir.Module` under construction.
+    """
+
     def __init__(self) -> None:
         self.ir = ir.Module()
 
@@ -52,6 +58,7 @@ class ModuleBuilder:
         output_names: Sequence[str | None] | None = None,
         attributes: Mapping[ir.AttributeName, ir.AttributeValue] | None = None,
     ) -> FunctionBuilder:
+        """Declare a function and return its builder."""
         self._require_available_symbol(name)
         fn = ir.Function(
             name=name,
@@ -66,6 +73,7 @@ class ModuleBuilder:
     def global_(
         self, name: ir.SymbolName, type: ir.Type, initializer: ir.Literal
     ) -> ir.Global:
+        """Declare and return an initialized global."""
         self._require_available_symbol(name)
         global_ = ir.Global(name, type, initializer)
         self.ir.globals.append(global_)
@@ -78,6 +86,12 @@ class ModuleBuilder:
 
 
 class FunctionBuilder:
+    """Build a function.
+
+    Attributes:
+        ir: The `ir.Function` under construction.
+    """
+
     def __init__(
         self,
         ctx: Ctx,
@@ -87,6 +101,7 @@ class FunctionBuilder:
         self.ir = function
 
     def region(self) -> RegionBuilder:
+        """Create and return the function body region."""
         if self.ir.body:
             raise ValueError("function already has a body")
         body = ir.Region()
@@ -95,21 +110,28 @@ class FunctionBuilder:
 
 
 class RegionBuilder:
+    """Build a region.
+
+    Attributes:
+        ir: The `ir.Region` under construction.
+    """
+
     def __init__(self, ctx: Ctx, region: ir.Region) -> None:
         self._ctx = ctx
         self.ir = region
 
     def first_block(self) -> BlockBuilder:
+        """Append the first block, deriving function input arguments."""
         if self.ir.blocks:
             raise ValueError("region already has a first block")
-        input_types = self._input_types
-        return self.block(input_types)
+        arg_types = self._function_input_types if self._is_function_body else ()
+        return self.block(arg_types)
 
     def block(self, arg_types: Sequence[ir.Type] = ()) -> BlockBuilder:
         """Append a block with arguments of the given types."""
         if self.ir.blocks:
             raise ValueError("multiple blocks per region are not supported")
-        if self.ir is self._ctx.function.body and tuple(arg_types) != self._input_types:
+        if self._is_function_body and tuple(arg_types) != self._function_input_types:
             raise TypeError(
                 "entry block argument types must match function input types"
             )
@@ -120,13 +142,21 @@ class RegionBuilder:
         return builder
 
     @property
-    def _input_types(self) -> tuple[ir.Type, ...]:
-        if self.ir is self._ctx.function.body:
-            return self._ctx.function.type.inputs
-        return ()
+    def _is_function_body(self) -> bool:
+        return self.ir is self._ctx.function.body
+
+    @property
+    def _function_input_types(self) -> tuple[ir.Type, ...]:
+        return self._ctx.function.type.inputs
 
 
 class BlockBuilder:
+    """Build a block.
+
+    Attributes:
+        ir: The `ir.Block` under construction.
+    """
+
     def __init__(
         self,
         ctx: Ctx,
@@ -148,6 +178,8 @@ class BlockBuilder:
         return op
 
     def const(self, literal: ir.Literal, type: ir.Type) -> ir.Value:
+        """Append a constant and return its result."""
+
         def create(results: tuple[ir.Value, ...]) -> ir.Const:
             (result,) = results
             return ir.Const(result=result, literal=literal)
@@ -156,6 +188,7 @@ class BlockBuilder:
         return op.result
 
     def get_global(self, global_: GlobalTarget) -> ir.Value:
+        """Append a global load and return its result."""
         resolved = self._ctx.resolve_global(global_)
 
         def create(results: tuple[ir.Value, ...]) -> ir.GetGlobal:
@@ -166,24 +199,32 @@ class BlockBuilder:
         return op.result
 
     def bool(self, value: builtins.bool) -> ir.Value:
+        """Append a boolean constant and return its result."""
         return self.const(value, ir.ScalarType.BOOL)
 
     def i32(self, value: int) -> ir.Value:
+        """Append an I32 constant and return its result."""
         return self.const(value, ir.ScalarType.I32)
 
     def i64(self, value: int) -> ir.Value:
+        """Append an I64 constant and return its result."""
         return self.const(value, ir.ScalarType.I64)
 
     def f32(self, value: float) -> ir.Value:
+        """Append an F32 constant and return its result."""
         return self.const(value, ir.ScalarType.F32)
 
     def f64(self, value: float) -> ir.Value:
+        """Append an F64 constant and return its result."""
         return self.const(value, ir.ScalarType.F64)
 
     def tensor(self, data: bytes, type: ir.TensorType) -> ir.Value:
+        """Append a tensor constant and return its result."""
         return self.const(data, type)
 
     def add(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
+        """Append an addition and return its result."""
+
         def create(results: tuple[ir.Value, ...]) -> ir.Add:
             (result,) = results
             return ir.Add(result=result, lhs=lhs, rhs=rhs)
@@ -192,6 +233,8 @@ class BlockBuilder:
         return op.result
 
     def mul(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
+        """Append a multiplication and return its result."""
+
         def create(results: tuple[ir.Value, ...]) -> ir.Mul:
             (result,) = results
             return ir.Mul(result=result, lhs=lhs, rhs=rhs)
@@ -200,6 +243,7 @@ class BlockBuilder:
         return op.result
 
     def matmul(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
+        """Append a matrix multiplication and return its result."""
         type = ir.matmul_result_type(lhs.type, rhs.type)
 
         def create(results: tuple[ir.Value, ...]) -> ir.MatMul:
@@ -214,6 +258,7 @@ class BlockBuilder:
         operand: ir.Value,
         permutation: Sequence[int],
     ) -> ir.Value:
+        """Append a transpose and return its result."""
         permutation = tuple(permutation)
         type = ir.transpose_result_type(operand.type, permutation)
 
@@ -235,6 +280,7 @@ class BlockBuilder:
         result_types: Sequence[ir.Type] = (),
         attributes: Mapping[ir.AttributeName, ir.AttributeValue] | None = None,
     ) -> tuple[ir.Value, ...]:
+        """Append an unknown operation and return its results."""
         operands = tuple(operands)
 
         def create(results: tuple[ir.Value, ...]) -> ir.UnknownOp:
@@ -253,6 +299,7 @@ class BlockBuilder:
         condition: ir.Value,
         result_types: Sequence[ir.Type] = (),
     ) -> IfBuilder:
+        """Append a conditional and return its region builders."""
         then_region = RegionBuilder(self._ctx, ir.Region())
         else_region = RegionBuilder(self._ctx, ir.Region())
 
@@ -272,6 +319,7 @@ class BlockBuilder:
         callee: CallTarget,
         arguments: Sequence[ir.Value] = (),
     ) -> tuple[ir.Value, ...]:
+        """Append a function call and return its results."""
         function = self._ctx.resolve_function(callee)
         actual_types = tuple(argument.type for argument in arguments)
         if actual_types != function.type.inputs:
@@ -291,6 +339,8 @@ class BlockBuilder:
         return op.results
 
     def return_(self, *operands: ir.Value) -> None:
+        """Terminate the block by returning values from the function."""
+
         def create(results: tuple[ir.Value, ...]) -> ir.Return:
             assert not results
             return ir.Return(operands=operands)
@@ -298,6 +348,8 @@ class BlockBuilder:
         self._append_operation([], create)
 
     def yield_(self, *operands: ir.Value) -> None:
+        """Terminate the block by yielding values from a nested region."""
+
         def create(results: tuple[ir.Value, ...]) -> ir.Yield:
             assert not results
             return ir.Yield(operands=operands)
@@ -306,6 +358,14 @@ class BlockBuilder:
 
 
 class IfBuilder:
+    """Build the regions of a conditional.
+
+    Attributes:
+        ir: The `ir.If` under construction.
+        then_region: The `RegionBuilder` for the taken branch.
+        else_region: The `RegionBuilder` for the other branch.
+    """
+
     def __init__(
         self,
         if_: ir.If,
