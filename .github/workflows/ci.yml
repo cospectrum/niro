@@ -32,7 +32,7 @@ jobs:
       - name: Test
         run: nix develop --no-update-lock-file -c uv run --locked pytest tests
 
-      - name: Test installed CLI
+      - name: Test end-to-end workflows
         run: nix develop --no-update-lock-file -c uv run --no-sync pytest e2e
 
   test-windows:
@@ -54,7 +54,7 @@ jobs:
       - name: Test
         run: uv run --locked pytest tests
 
-      - name: Test installed CLI
+      - name: Test end-to-end workflows
         run: uv run --no-sync pytest e2e
 
   checks:

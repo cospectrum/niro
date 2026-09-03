@@ -67,7 +67,7 @@
               echo ":: Report coverage"
               uv run --no-sync coverage report
 
-              echo ":: Test installed CLI"
+              echo ":: Test end-to-end workflows"
               uv run --no-sync pytest e2e
 
               echo ":: Type check"

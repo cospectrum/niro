@@ -38,9 +38,8 @@ Run the complete local CI workflow before submitting a change:
 nix run .#ci
 ```
 
-The complete workflow runs tests with branch coverage, the installed-CLI E2E
-suite, type checking, formatting, linting, and checks for GitHub Actions
-workflows.
+The complete workflow runs tests with branch coverage, the end-to-end suite,
+type checking, formatting, linting, and checks for GitHub Actions workflows.
 
 Unit tests mirror the source tree under `tests/`. End-to-end tests live under
 `e2e/`, grouped by the interface or workflow they exercise.
