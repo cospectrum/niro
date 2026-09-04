@@ -1,9 +1,5 @@
 """Niro IR is a strongly typed, SSA-based representation composed of types,
 values, program structure, operations, literals, and attributes.
-
-Public IR objects are re-exported from this package. Prefer importing them from
-[`niro.ir`][] rather than from implementation modules such as
-[`niro.ir.types`][] or [`niro.ir.ops`][].
 """
 
 from niro.ir.data import AttributeName, Attributes, AttributeValue, Literal

@@ -1,4 +1,9 @@
-# niro.builder
+::: niro.builder
+    options:
+      heading_level: 1
+      members: false
+      show_root_full_path: true
+      show_root_heading: true
 
 ::: niro.builder.ModuleBuilder
 

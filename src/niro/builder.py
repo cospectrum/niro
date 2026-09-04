@@ -1,3 +1,9 @@
+"""Builders for constructing Niro IR programs.
+
+Start from [`ModuleBuilder`][niro.builder.ModuleBuilder]; the nested builders
+are obtained from it rather than constructed directly.
+"""
+
 from __future__ import annotations
 
 import builtins
@@ -47,7 +53,7 @@ class ModuleBuilder:
     """
 
     def __init__(self) -> None:
-        self.ir = ir.Module()
+        self.ir: ir.Module = ir.Module()
 
     def function(
         self,
@@ -98,7 +104,7 @@ class FunctionBuilder:
         function: ir.Function,
     ) -> None:
         self._ctx = ctx
-        self.ir = function
+        self.ir: ir.Function = function
 
     def region(self) -> RegionBuilder:
         """Create and return the function body region."""
@@ -118,7 +124,7 @@ class RegionBuilder:
 
     def __init__(self, ctx: Ctx, region: ir.Region) -> None:
         self._ctx = ctx
-        self.ir = region
+        self.ir: ir.Region = region
 
     def first_block(self) -> BlockBuilder:
         """Append the first block, deriving function input arguments."""
@@ -163,7 +169,7 @@ class BlockBuilder:
         block: ir.Block,
     ) -> None:
         self._ctx = ctx
-        self.ir = block
+        self.ir: ir.Block = block
 
     def _append_operation[Op: ir.Op](
         self,
@@ -372,6 +378,6 @@ class IfBuilder:
         then_region: RegionBuilder,
         else_region: RegionBuilder,
     ) -> None:
-        self.ir = if_
-        self.then_region = then_region
-        self.else_region = else_region
+        self.ir: ir.If = if_
+        self.then_region: RegionBuilder = then_region
+        self.else_region: RegionBuilder = else_region

@@ -26,6 +26,7 @@ class Ctx:
 
 
 def import_onnx(onnx_model: onnx.ModelProto) -> ir.Module:
+    """Import ONNX module to Niro IR"""
     graph = onnx_model.graph
     module = ModuleBuilder()
     weights = _import_initializers(graph, module)

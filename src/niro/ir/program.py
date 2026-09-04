@@ -1,6 +1,6 @@
 """Program structure in Niro IR.
 
-Public objects are re-exported from [`niro.ir`][].
+Re-exported in [`niro.ir`][].
 """
 
 from __future__ import annotations
