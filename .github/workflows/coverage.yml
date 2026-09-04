@@ -29,7 +29,7 @@ jobs:
         run: nix develop --no-update-lock-file -c uv sync --locked
 
       - name: Run tests and collect coverage data
-        run: nix develop --no-update-lock-file -c uv run --no-sync coverage run --branch --source=niro -m pytest
+        run: nix develop --no-update-lock-file -c uv run --no-sync coverage run --branch --source=niro -m pytest tests
 
       - name: Convert coverage data to Cobertura XML
         run: nix develop --no-update-lock-file -c uv run --no-sync coverage xml

@@ -30,7 +30,10 @@ jobs:
       - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31.10.6
 
       - name: Test
-        run: nix develop --no-update-lock-file -c uv run --locked pytest
+        run: nix develop --no-update-lock-file -c uv run --locked pytest tests
+
+      - name: Test end-to-end workflows
+        run: nix develop --no-update-lock-file -c uv run --no-sync pytest e2e
 
   test-windows:
     name: Test (windows-2025)
@@ -49,7 +52,10 @@ jobs:
           version: 0.12.5
 
       - name: Test
-        run: uv run --locked pytest
+        run: uv run --locked pytest tests
+
+      - name: Test end-to-end workflows
+        run: uv run --no-sync pytest e2e
 
   checks:
     name: Checks

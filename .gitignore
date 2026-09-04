@@ -5,11 +5,13 @@ build/
 dist/
 wheels/
 *.egg-info
+/*.onnx
 
 # Coverage reports
 .coverage
 coverage.xml
 htmlcov/
+site/
 
 # Virtual environments
 .venv

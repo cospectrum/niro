@@ -1,158 +1,203 @@
-"""Lower Niro IR to high-level MLIR using xDSL."""
+"""Lower Niro IR to high-level MLIR using xDSL.
+
+``_lower_*`` functions return lowered values without mutating caller-owned state.
+``_emit_*`` functions append operations and update explicitly passed value tables.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Collection
-from dataclasses import dataclass
 from typing import cast, overload
 
+from xdsl.dialect_interfaces.op_asm import OpAsmDialectInterface
 from xdsl.dialects import arith, builtin, func, ml_program, scf, tensor
 from xdsl.dialects.linalg import ops as linalg
 from xdsl.ir import Attribute, Block, Operation, Region, SSAValue
 
 from niro import ir
-from niro.builder import ENTRY_POINT_ATTR
+
+type ValueTable = dict[ir.ValueId, SSAValue]
 
 
-@dataclass(slots=True)
-class Ctx:
-    block: Block
-    values: dict[ir.ValueId, SSAValue]
-    globals: list[Operation]
-    function_name: str
-
-
-def lower_to_mlir(module: ir.Module) -> builtin.ModuleOp:
-    """Lower a Niro module to a verified, high-level MLIR module."""
-    entry_point = module.attributes.get(ENTRY_POINT_ATTR)
-    if entry_point is None:
-        raise ValueError("Niro module must have an entry point")
-    if not isinstance(entry_point, str):
-        raise TypeError("Niro entry point must be a string")
-    if not any(
-        function.name == entry_point and function.body is not None
-        for function in module.functions
-    ):
-        raise ValueError(f"invalid Niro entry point: {entry_point!r}")
-
-    globals_: list[Operation] = []
-    functions = [
-        _lower_function(function, entry_point, globals_)
-        for function in module.functions
+def export_mlir(module: ir.Module) -> builtin.ModuleOp:
+    """Export a Niro module as a verified, high-level MLIR module."""
+    lowered_functions = [_lower_function(function) for function in module.functions]
+    declared_globals = [_lower_global(global_) for global_ in module.globals]
+    generated_globals = [
+        global_operation
+        for function_globals, _ in lowered_functions
+        for global_operation in function_globals
     ]
-    attributes = _lower_attributes(module.attributes, exclude={ENTRY_POINT_ATTR})
-    result = builtin.ModuleOp([*globals_, *functions], attributes=attributes)
+    functions = [function for _, function in lowered_functions]
+    result = builtin.ModuleOp(
+        [*declared_globals, *generated_globals, *functions],
+        attributes=_lower_attributes(module.attributes),
+    )
     result.verify()
     return result
 
 
 def _lower_function(
     function: ir.Function,
-    entry_point: str,
-    globals_: list[Operation],
-) -> func.FuncOp:
+) -> tuple[tuple[Operation, ...], func.FuncOp]:
     inputs = [_lower_type(value_type) for value_type in function.type.inputs]
     outputs = [_lower_type(value_type) for value_type in function.type.outputs]
     if function.body is None:
         result = func.FuncOp.external(function.name, inputs, outputs)
         result.attributes.update(_lower_attributes(function.attributes))
-        return result
+        return (), result
     (niro_block,) = function.body.blocks
     block = Block(arg_types=inputs)
-    ctx = Ctx(
-        block=block,
-        values={
-            argument.id: block_argument
-            for argument, block_argument in zip(
-                function.arguments, block.args, strict=True
-            )
-        },
-        globals=globals_,
-        function_name=function.name,
+    generated_globals: list[Operation] = []
+    values: ValueTable = {
+        argument.id: block_argument
+        for argument, block_argument in zip(
+            niro_block.arguments, block.args, strict=True
+        )
+    }
+    _emit_operations(
+        block,
+        values,
+        generated_globals,
+        function.name,
+        niro_block.operations,
     )
-    _lower_operations(ctx, niro_block.operations)
     result = func.FuncOp(
         function.name,
         (inputs, outputs),
         Region(block),
-        visibility="public" if function.name == entry_point else "private",
     )
     result.attributes.update(_lower_attributes(function.attributes))
-    if function.name == entry_point:
-        result.attributes["niro.entry_point"] = builtin.UnitAttr()
-    return result
+    return tuple(generated_globals), result
 
 
-def _lower_operations(ctx: Ctx, operations: list[ir.Op]) -> None:
+def _emit_operations(
+    block: Block,
+    values: ValueTable,
+    generated_globals: list[Operation],
+    function_name: str,
+    operations: list[ir.Op],
+) -> None:
     for operation in operations:
-        _lower_operation(ctx, operation)
+        _emit_operation(
+            block,
+            values,
+            generated_globals,
+            function_name,
+            operation,
+        )
 
 
-def _lower_operation(ctx: Ctx, operation: ir.Op) -> None:
+def _emit_operation(
+    block: Block,
+    values: ValueTable,
+    generated_globals: list[Operation],
+    function_name: str,
+    operation: ir.Op,
+) -> None:
     match operation:
         case ir.Const():
-            _lower_const(ctx, operation)
+            _emit_const(
+                block,
+                values,
+                generated_globals,
+                function_name,
+                operation,
+            )
+        case ir.GetGlobal():
+            lowered = ml_program.GlobalLoadConstantOp(
+                builtin.SymbolRefAttr(operation.name),
+                _lower_type(operation.result.type),
+            )
+            block.add_op(lowered)
+            values[operation.result.id] = lowered.result
         case ir.Add():
-            _lower_arithmetic(ctx, operation, arith.AddiOp, arith.AddfOp)
+            _emit_arithmetic(block, values, operation, arith.AddiOp, arith.AddfOp)
         case ir.Mul():
-            _lower_arithmetic(ctx, operation, arith.MuliOp, arith.MulfOp)
+            _emit_arithmetic(block, values, operation, arith.MuliOp, arith.MulfOp)
         case ir.MatMul():
-            _lower_matmul(ctx, operation)
+            _emit_matmul(block, values, operation)
         case ir.Transpose():
-            _lower_transpose(ctx, operation)
+            _emit_transpose(block, values, operation)
         case ir.Call():
             lowered = func.CallOp(
                 operation.callee,
-                [_lookup_value(ctx, value) for value in operation.arguments],
+                [_lookup_value(values, value) for value in operation.arguments],
                 [_lower_type(value.type) for value in operation.results],
             )
-            ctx.block.add_op(lowered)
-            _record_results(ctx, operation.results, lowered.results)
+            block.add_op(lowered)
+            _bind_results(values, operation.results, lowered.results)
         case ir.Return():
-            ctx.block.add_op(
+            block.add_op(
                 func.ReturnOp(
-                    *(_lookup_value(ctx, value) for value in operation.operands)
+                    *(_lookup_value(values, value) for value in operation.operands)
                 )
             )
         case ir.Yield():
-            ctx.block.add_op(
+            block.add_op(
                 scf.YieldOp(
-                    *(_lookup_value(ctx, value) for value in operation.operands)
+                    *(_lookup_value(values, value) for value in operation.operands)
                 )
             )
         case ir.If():
             lowered = scf.IfOp(
-                _lookup_value(ctx, operation.condition),
+                _lookup_value(values, operation.condition),
                 [_lower_type(value.type) for value in operation.results],
-                _lower_region(ctx, operation.then_region),
-                _lower_region(ctx, operation.else_region),
+                _emit_region(
+                    operation.then_region,
+                    values,
+                    generated_globals,
+                    function_name,
+                ),
+                _emit_region(
+                    operation.else_region,
+                    values,
+                    generated_globals,
+                    function_name,
+                ),
             )
-            ctx.block.add_op(lowered)
-            _record_results(ctx, operation.results, lowered.results)
+            block.add_op(lowered)
+            _bind_results(values, operation.results, lowered.results)
         case ir.UnknownOp():
             raise NotImplementedError(
                 f"cannot lower unknown operation to MLIR: {operation.name}"
             )
 
 
-def _lower_region(ctx: Ctx, region: ir.Region) -> Region:
+def _emit_region(
+    region: ir.Region,
+    visible_values: ValueTable,
+    generated_globals: list[Operation],
+    function_name: str,
+) -> Region:
     (niro_block,) = region.blocks
     block = Block()
-    nested = Ctx(block, dict(ctx.values), ctx.globals, ctx.function_name)
-    _lower_operations(nested, niro_block.operations)
+    values = dict(visible_values)
+    _emit_operations(
+        block,
+        values,
+        generated_globals,
+        function_name,
+        niro_block.operations,
+    )
     return Region(block)
 
 
-def _lower_const(ctx: Ctx, operation: ir.Const) -> None:
+def _emit_const(
+    block: Block,
+    values: ValueTable,
+    generated_globals: list[Operation],
+    function_name: str,
+    operation: ir.Const,
+) -> None:
     if isinstance(operation.result.type, ir.TensorType):
-        data = cast(bytes, operation.value)
+        data = cast(bytes, operation.literal)
         tensor_type = cast(
             builtin.TensorType[builtin.AnyDenseElement],
             _lower_type(operation.result.type),
         )
-        value = builtin.DenseIntOrFPElementsAttr(tensor_type, builtin.BytesAttr(data))
-        symbol = f"__niro_{ctx.function_name}_{int(operation.result.id)}"
-        ctx.globals.append(
+        symbol = f"__niro_{function_name}_{int(operation.result.id)}"
+        value = _dense_resource(symbol, tensor_type, data)
+        generated_globals.append(
             ml_program.GlobalOp(
                 builtin.StringAttr(symbol),
                 tensor_type,
@@ -166,13 +211,47 @@ def _lower_const(ctx: Ctx, operation: ir.Const) -> None:
         )
     else:
         scalar_type = operation.result.type
-        lowered = arith.ConstantOp(_lower_scalar_literal(operation.value, scalar_type))
-    ctx.block.add_op(lowered)
-    ctx.values[operation.result.id] = lowered.results[0]
+        lowered = arith.ConstantOp(
+            _lower_scalar_literal(operation.literal, scalar_type)
+        )
+    block.add_op(lowered)
+    values[operation.result.id] = lowered.results[0]
 
 
-def _lower_arithmetic(
-    ctx: Ctx,
+def _lower_global(global_: ir.Global) -> ml_program.GlobalOp:
+    if not isinstance(global_.type, ir.TensorType):
+        raise TypeError("MLIR globals currently require tensor types")
+    data = cast(bytes, global_.initializer)
+    tensor_type = cast(
+        builtin.TensorType[builtin.AnyDenseElement], _lower_type(global_.type)
+    )
+    value = _dense_resource(global_.name, tensor_type, data)
+    lowered = ml_program.GlobalOp(
+        builtin.StringAttr(global_.name),
+        tensor_type,
+        None,
+        value,
+        builtin.StringAttr("private"),
+    )
+    lowered.attributes.update(_lower_attributes(global_.attributes))
+    return lowered
+
+
+def _dense_resource(
+    name: str,
+    tensor_type: builtin.TensorType[builtin.AnyDenseElement],
+    data: bytes,
+) -> builtin.DenseResourceAttr:
+    resources = builtin.Builtin.get_interface(OpAsmDialectInterface)
+    assert resources is not None
+    handle = resources.declare_resource(name)
+    resources.parse_resource(handle, f"0x{data.hex().upper()}")
+    return builtin.DenseResourceAttr.from_params(handle, tensor_type)
+
+
+def _emit_arithmetic(
+    block: Block,
+    values: ValueTable,
     operation: ir.Add | ir.Mul,
     integer_op: type[arith.AddiOp | arith.MuliOp],
     float_op: type[arith.AddfOp | arith.MulfOp],
@@ -184,31 +263,39 @@ def _lower_arithmetic(
         else integer_op
     )
     lowered = op_type(
-        _lookup_value(ctx, operation.lhs),
-        _lookup_value(ctx, operation.rhs),
+        _lookup_value(values, operation.lhs),
+        _lookup_value(values, operation.rhs),
         result_type=_lower_type(operation.result.type),
     )
-    ctx.block.add_op(lowered)
-    ctx.values[operation.result.id] = lowered.result
+    block.add_op(lowered)
+    values[operation.result.id] = lowered.result
 
 
-def _lower_transpose(ctx: Ctx, operation: ir.Transpose) -> None:
+def _emit_transpose(
+    block: Block,
+    values: ValueTable,
+    operation: ir.Transpose,
+) -> None:
     result_type = cast(ir.TensorType, operation.result.type)
     _require_static_shape(result_type, "transpose")
     lowered_type = _lower_type(result_type)
     empty = tensor.EmptyOp([], lowered_type)
     permutation = builtin.DenseArrayBase.from_list(builtin.i64, operation.permutation)
     lowered = linalg.TransposeOp(
-        _lookup_value(ctx, operation.operand),
+        _lookup_value(values, operation.operand),
         empty.tensor,
         permutation,
         lowered_type,
     )
-    ctx.block.add_ops([empty, lowered])
-    ctx.values[operation.result.id] = lowered.results[0]
+    block.add_ops([empty, lowered])
+    values[operation.result.id] = lowered.results[0]
 
 
-def _lower_matmul(ctx: Ctx, operation: ir.MatMul) -> None:
+def _emit_matmul(
+    block: Block,
+    values: ValueTable,
+    operation: ir.MatMul,
+) -> None:
     lhs_type = cast(ir.TensorType, operation.lhs.type)
     rhs_type = cast(ir.TensorType, operation.rhs.type)
     result_type = cast(ir.TensorType, operation.result.type)
@@ -226,14 +313,14 @@ def _lower_matmul(ctx: Ctx, operation: ir.MatMul) -> None:
     )
     lowered = linalg.MatmulOp(
         inputs=[
-            _lookup_value(ctx, operation.lhs),
-            _lookup_value(ctx, operation.rhs),
+            _lookup_value(values, operation.lhs),
+            _lookup_value(values, operation.rhs),
         ],
         outputs=[fill.results[0]],
         res=[lowered_type],
     )
-    ctx.block.add_ops([zero, empty, fill, lowered])
-    ctx.values[operation.result.id] = lowered.results[0]
+    block.add_ops([zero, empty, fill, lowered])
+    values[operation.result.id] = lowered.results[0]
 
 
 @overload
@@ -296,18 +383,15 @@ def _lower_scalar_literal(
 
 
 def _lower_attributes(
-    attributes: dict[str, ir.Attribute],
-    *,
-    exclude: Collection[str] = (),
+    attributes: ir.Attributes,
 ) -> dict[str, Attribute]:
     return {
         name if "." in name else f"niro.{name}": _lower_attribute(value)
         for name, value in attributes.items()
-        if name not in exclude
     }
 
 
-def _lower_attribute(value: ir.Attribute) -> Attribute:
+def _lower_attribute(value: ir.AttributeValue) -> Attribute:
     if value is None:
         return builtin.UnitAttr()
     if isinstance(value, bool):
@@ -323,16 +407,16 @@ def _lower_attribute(value: ir.Attribute) -> Attribute:
     return builtin.ArrayAttr(_lower_attribute(element) for element in value)
 
 
-def _lookup_value(ctx: Ctx, value: ir.Value) -> SSAValue:
-    return ctx.values[value.id]
+def _lookup_value(values: ValueTable, value: ir.Value) -> SSAValue:
+    return values[value.id]
 
 
-def _record_results(
-    ctx: Ctx,
+def _bind_results(
+    values: ValueTable,
     niro_values: tuple[ir.Value, ...],
     mlir_values: tuple[SSAValue, ...],
 ) -> None:
-    ctx.values.update(
+    values.update(
         (niro_value.id, mlir_value)
         for niro_value, mlir_value in zip(niro_values, mlir_values, strict=True)
     )

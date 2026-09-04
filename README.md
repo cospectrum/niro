@@ -1,6 +1,6 @@
 # niro
 
-[![GitHub](https://img.shields.io/badge/GitHub-cospectrum%2Fniro-0969DA?logo=github)](https://github.com/cospectrum/niro)
+[![GitHub](https://img.shields.io/badge/GitHub-cospectrum%2Fniro-4C1D95?logo=github)](https://github.com/cospectrum/niro)
 [![CI](https://github.com/cospectrum/niro/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/cospectrum/niro/actions/workflows/ci.yml?query=branch%3Amain)
 [![Coverage Status](https://coveralls.io/repos/github/cospectrum/niro/badge.svg?branch=main)](https://coveralls.io/github/cospectrum/niro?branch=main)
 
@@ -13,7 +13,15 @@ PyTorch, and other frontends through one unified SSA IR.
 The initial target is [MLIR], primarily using [xDSL]. Future backends may
 include WebAssembly, [GIMPLE], and others.
 
-The Niro IR is described in [docs/ir.md](docs/ir.md).
+[Documentation](https://cospectrum.github.io/niro/)
+
+## Installation
+
+### CLI
+
+```sh
+uv tool install git+https://github.com/cospectrum/niro.git
+```
 
 ## Usage
 
@@ -38,29 +46,15 @@ reading from standard input:
 niro emit mlir --input-format onnx < model.onnx | mlir-opt
 ```
 
-## Development
-
-Run the local CI checks with:
+You can also inspect a model's entry-point signature:
 
 ```sh
-nix run .#ci
+niro inspect signature model.onnx
 ```
 
-### Style guide
+## Contributing
 
-We want the project to remain small, direct, and easy to understand without
-compromising correctness or output quality. When contributing:
-
-- Prefer simple designs that model the required semantics precisely over
-  speculative abstractions.
-- Use type hints throughout Python code.
-- Keep the core IR independent of any single frontend or backend.
-- Establish invariants at construction time, derive redundant information, so
-  downstream code can trust constructed values.
-- Keep code compact and minimal without sacrificing clarity or required
-  behavior.
-- Add tests for meaningful behavior and invariants.
-- Keep documentation concise, and try to introduce concepts before relying on them.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 [GIMPLE]: https://gcc.gnu.org/onlinedocs/gccint/GIMPLE.html
 [MLIR]: https://mlir.llvm.org/

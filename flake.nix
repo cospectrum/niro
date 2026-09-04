@@ -62,10 +62,13 @@
               uv sync --locked
 
               echo ":: Test with branch coverage"
-              uv run --no-sync coverage run --branch --source=niro -m pytest
+              uv run --no-sync coverage run --branch --source=niro -m pytest tests
 
               echo ":: Report coverage"
               uv run --no-sync coverage report
+
+              echo ":: Test end-to-end workflows"
+              uv run --no-sync pytest e2e
 
               echo ":: Type check"
               uv run --no-sync ty check
@@ -75,6 +78,9 @@
 
               echo ":: Lint"
               uv run --no-sync ruff check
+
+              echo ":: Build documentation"
+              uv run --no-sync zensical build --clean
 
               echo ":: Check GitHub Actions workflows"
               actionlint
