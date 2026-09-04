@@ -93,8 +93,10 @@ compromising correctness or output quality. When contributing:
   precisely, and keep the core IR independent of any single frontend or backend.
 - Use type hints throughout Python code and derive redundant information rather
   than storing it.
-- Establish invariants at construction time, use assertions to check internal
-  invariants, and test meaningful behavior and invariants.
+- Keep IR dataclasses free of validation. Implement IR validity rules in
+  `src/niro/ir/verify.py`; builders call its local verifiers before insertion,
+  and `niro.ir.verify` checks complete modules. Use assertions for internal
+  invariants, and test meaningful behavior and validity rules.
 - Keep documentation concise and introduce concepts before relying on them.
 
 [uv]: https://docs.astral.sh/uv/

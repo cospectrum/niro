@@ -39,7 +39,7 @@ def test_function_block_rejects_arguments_that_do_not_match_inputs() -> None:
         type=ir.FunctionType((ir.ScalarType.F32,), ()),
     )
 
-    with pytest.raises(TypeError, match="must match function input types"):
+    with pytest.raises(ir.VerificationError, match="must match region input types"):
         function.region().block((ir.ScalarType.I64,))
 
 
@@ -139,7 +139,8 @@ def test_return() -> None:
 
 
 def test_yield() -> None:
-    block = function_builder().region().block()
+    entry = function_builder().region().block()
+    block = entry.if_(entry.bool(True)).then_region.first_block()
     block.yield_()
 
     assert block.inner.operations == [ir.Yield()]
@@ -181,3 +182,60 @@ def test_global_and_function_names_share_namespace() -> None:
 
     with pytest.raises(ValueError, match="symbol names must be unique"):
         module.function(name="main", type=ir.FunctionType((), ()))
+
+
+def test_rejected_declarations_leave_module_unchanged() -> None:
+    module = ModuleBuilder()
+    with pytest.raises(ir.VerificationError, match="input names must match"):
+        module.function(name="main", type=ir.FunctionType((), ()), input_names=("x",))
+    with pytest.raises(ir.VerificationError, match="4 bytes, expected 8"):
+        module.global_("weight", ir.TensorType(ir.ScalarType.F32, (2,)), bytes(4))
+    with pytest.raises(ir.VerificationError, match="non-negative integer"):
+        module.function(
+            name="bad",
+            type=ir.FunctionType((ir.TensorType(ir.ScalarType.F32, (-1,)),), ()),
+        )
+    assert module.inner == ir.Module()
+
+
+def test_rejected_operations_are_not_appended() -> None:
+    block = function_builder().region().block()
+    boolean = block.bool(True)
+    with pytest.raises(ir.VerificationError, match="does not support boolean"):
+        block.add(boolean, boolean)
+    with pytest.raises(ir.VerificationError, match="out of range"):
+        block.i32(1 << 31)
+    with pytest.raises(ir.VerificationError, match="expected Return"):
+        block.yield_()
+    with pytest.raises(ir.VerificationError, match="Return operand types"):
+        block.return_(boolean)
+    assert block.inner.operations == [ir.Const(boolean, True)]
+
+
+def test_builder_checks_call_signature_before_append() -> None:
+    module = ModuleBuilder()
+    callee = module.function(
+        name="callee", type=ir.FunctionType((ir.ScalarType.I32,), ())
+    )
+    block = (
+        module.function(name="main", type=ir.FunctionType((), ()))
+        .region()
+        .first_block()
+    )
+    with pytest.raises(ir.VerificationError, match="call argument types"):
+        block.call(callee)
+    assert block.inner.operations == []
+
+
+def test_builder_checks_if_branch_arguments_and_yields() -> None:
+    entry = function_builder().region().first_block()
+    conditional = entry.if_(entry.bool(True), (ir.ScalarType.I32,))
+    with pytest.raises(ir.VerificationError, match="region input types"):
+        conditional.then_region.block((ir.ScalarType.I32,))
+    assert conditional.then_region.inner.blocks == []
+    branch = conditional.then_region.first_block()
+    with pytest.raises(ir.VerificationError, match="expected Yield"):
+        branch.return_()
+    with pytest.raises(ir.VerificationError, match="Yield operand types"):
+        branch.yield_()
+    branch.yield_(branch.i32(1))

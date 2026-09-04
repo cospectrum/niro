@@ -18,6 +18,7 @@ The current reference implementation is in `src/niro/ir/`.
 - [Operations](#operations)
 - [Complete example](#complete-example)
 - [Well-formed IR](#well-formed-ir)
+- [Verification](#verification)
 
 ## Types
 
@@ -25,6 +26,10 @@ The current reference implementation is in `src/niro/ir/`.
 
 `ScalarType` describes a single non-tensor value. The initial scalar types are
 `BOOL`, `I32`, `I64`, `F32`, and `F64`.
+
+`I32` and `I64` literals are signed integers within their type's range. Floating
+point literals may be rounded to their element type. Finite literals that would
+overflow `F32` are rejected; infinities and NaNs are allowed.
 
 ### `TensorType`
 
@@ -301,8 +306,11 @@ result = Value(ValueId(2), ScalarType.F32)
 add = Add(result=result, lhs=left, rhs=right)
 ```
 
-Arithmetic operands and results have compatible types. `MatMul` operates on
-compatible rank-two tensors; its result shape follows from the operand shapes.
+`Add` and `Mul` require operands and results with the same numeric type,
+including tensor shape. They do not perform implicit broadcasting. `MatMul`
+operates on numeric rank-two tensors with matching element types and compatible
+contracting dimensions; its result shape follows from the operand shapes.
+Boolean values are not numeric operands for these operations.
 
 ### `Transpose`
 
@@ -427,3 +435,57 @@ signatures. Operation operands and results have compatible types and shapes,
 and calls name functions with matching signatures. Every region ends with the
 terminator required by its containing operation, and values defined inside a
 region are not visible outside it.
+
+## Verification
+
+Call `niro.ir.verify(module)` after construction or transformation to check a
+complete module:
+
+```python
+from niro import ir
+
+ir.verify(module)
+```
+
+The function returns `None` on success and leaves the module unchanged. It raises
+`ir.VerificationError`, a `ValueError` subclass, on the first violation. The
+message identifies the global or function and, where applicable, the operation
+index and nested region.
+
+Verification checks symbol uniqueness and references, global initializers,
+function signatures, operation types, SSA definitions and visibility, and region
+terminators. Function bodies and `If` branches must contain exactly one block.
+An `If` branch has no block arguments and captures values visible before the
+`If`. Regions and blocks must each have one owner.
+
+External function declarations and structurally valid `UnknownOp` operations are
+allowed. Verification does not establish unknown operation semantics or backend
+support.
+
+IR dataclasses store data without validation. All IR validity rules live in
+`src/niro/ir/verify.py`, and its public functions are re-exported in `niro.ir`.
+Builders call local verifiers before inserting declarations, blocks, and
+operations. They retain guards for construction steps, such as adding a second
+function body or appending after a terminator.
+
+The local functions raise `VerificationError` and return `None` on success:
+
+| Function | What it checks |
+| --- | --- |
+| `verify_type(value_type)` | A scalar, tensor, or function type |
+| `verify_value(value)` | A value's non-negative ID and scalar or tensor type |
+| `verify_function_signature(function)` | Name, signature, interface names, and attributes, allowing an unfinished body |
+| `verify_global(global_)` | Name, type, initializer, and attributes |
+| `verify_op(op)` | Values, attributes, and operation type constraints, allowing unfinished nested regions |
+| `verify_call(op, callee)` | A call and its resolved function signature |
+| `verify_block_arguments(block, owner)` | Function inputs or an argument-free `If` branch |
+| `verify_terminator(op, owner)` | `Return` for a function or `Yield` for an `If`, with matching output types |
+| `verify_symbol_available(module, name)` | Availability of a name for a new declaration |
+
+The `owner` argument is a `Function` or `If`. These explicit names distinguish
+local checks from complete verification; there are no overloads of `verify`.
+Local checks do not establish SSA scope, symbol resolution, or completeness of
+the whole program. Call `verify(module)` after building or transforming it.
+
+`matmul_result_type` and `transpose_result_type` also live in `verify.py`. They
+check operands and derive a result type using the same rules as `verify_op`.

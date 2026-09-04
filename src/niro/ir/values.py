@@ -19,7 +19,3 @@ class Value:
 
     id: ValueId
     type: Type
-
-    def __post_init__(self) -> None:
-        if self.id < 0:
-            raise ValueError("value ID cannot be negative")

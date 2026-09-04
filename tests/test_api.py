@@ -34,6 +34,22 @@ def test_ir_exports_program() -> None:
     )
 
 
+def test_ir_exports_verifiers() -> None:
+    from niro import ir
+    from niro.ir.verify import verify, verify_op, verify_type, verify_value
+
+    assert ir.verify is verify
+    assert ir.verify_op is verify_op
+    assert ir.verify_type is verify_type
+    assert ir.verify_value is verify_value
+    assert {
+        "verify_global",
+        "verify_function_signature",
+        "verify_terminator",
+        "verify_call",
+    } <= set(ir.__all__)
+
+
 def test_exports_import_onnx() -> None:
     import niro
     from niro import import_onnx

@@ -16,8 +16,6 @@ from niro.ir.ops import (
     Transpose,
     UnknownOp,
     Yield,
-    matmul_result_type,
-    transpose_result_type,
 )
 from niro.ir.program import (
     Block,
@@ -30,6 +28,21 @@ from niro.ir.program import (
 )
 from niro.ir.types import Dimension, ScalarType, Shape, TensorType, Type
 from niro.ir.values import Value, ValueId
+from niro.ir.verify import (
+    VerificationError,
+    matmul_result_type,
+    transpose_result_type,
+    verify,
+    verify_block_arguments,
+    verify_call,
+    verify_function_signature,
+    verify_global,
+    verify_op,
+    verify_symbol_available,
+    verify_terminator,
+    verify_type,
+    verify_value,
+)
 
 __all__ = [
     "Add",
@@ -61,7 +74,18 @@ __all__ = [
     "UnknownOp",
     "Value",
     "ValueId",
+    "VerificationError",
     "Yield",
     "matmul_result_type",
     "transpose_result_type",
+    "verify",
+    "verify_block_arguments",
+    "verify_call",
+    "verify_function_signature",
+    "verify_global",
+    "verify_op",
+    "verify_symbol_available",
+    "verify_terminator",
+    "verify_type",
+    "verify_value",
 ]

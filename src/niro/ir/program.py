@@ -48,9 +48,6 @@ class Function:
     output_names: tuple[str | None, ...] | None = None
     attributes: Attributes = field(default_factory=dict)
 
-    def __post_init__(self) -> None:
-        _validate_function(self)
-
     @property
     def first_block(self) -> Block | None:
         if not self.body:
@@ -70,41 +67,9 @@ class Global:
     initializer: Literal
     attributes: Attributes = field(default_factory=dict)
 
-    def __post_init__(self) -> None:
-        if not self.name:
-            raise ValueError("global name cannot be empty")
-
 
 @dataclass(slots=True)
 class Module:
     functions: list[Function] = field(default_factory=list)
     globals: list[Global] = field(default_factory=list)
     attributes: Attributes = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        names = [global_.name for global_ in self.globals]
-        names.extend(function.name for function in self.functions)
-        if len(names) != len(set(names)):
-            raise ValueError("module symbol names must be unique")
-
-
-def _validate_function(function: Function) -> None:
-    if not function.name:
-        raise ValueError("function name cannot be empty")
-    _validate_interface_names("input", function.input_names, len(function.type.inputs))
-    _validate_interface_names(
-        "output", function.output_names, len(function.type.outputs)
-    )
-
-
-def _validate_interface_names(
-    kind: str,
-    names: tuple[str | None, ...] | None,
-    arity: int,
-) -> None:
-    if names is None:
-        return
-    if len(names) != arity:
-        raise ValueError(f"{kind} names must match {kind} arity")
-    if any(name == "" for name in names):
-        raise ValueError(f"{kind} names cannot be empty")

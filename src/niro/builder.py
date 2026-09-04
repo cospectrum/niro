@@ -34,6 +34,7 @@ class Ctx:
 
     def new_value(self, type: ir.Type) -> ir.Value:
         value = ir.Value(ir.ValueId(self._next_value_id), type)
+        ir.verify_value(value)
         self._next_value_id += 1
         return value
 
@@ -73,7 +74,7 @@ class ModuleBuilder(Builder[ir.Module]):
         attributes: Mapping[ir.AttributeName, ir.AttributeValue] | None = None,
     ) -> FunctionBuilder:
         """Declare a function and return its builder."""
-        self._require_available_symbol(name)
+        ir.verify_symbol_available(self.inner, name)
         fn = ir.Function(
             name=name,
             type=type,
@@ -81,6 +82,7 @@ class ModuleBuilder(Builder[ir.Module]):
             output_names=None if output_names is None else tuple(output_names),
             attributes=dict(attributes or {}),
         )
+        ir.verify_function_signature(fn)
         self.inner.functions.append(fn)
         return FunctionBuilder(Ctx(self.inner, fn), fn)
 
@@ -88,15 +90,11 @@ class ModuleBuilder(Builder[ir.Module]):
         self, name: ir.SymbolName, type: ir.Type, initializer: ir.Literal
     ) -> ir.Global:
         """Declare and return an initialized global."""
-        self._require_available_symbol(name)
+        ir.verify_symbol_available(self.inner, name)
         global_ = ir.Global(name, type, initializer)
+        ir.verify_global(global_)
         self.inner.globals.append(global_)
         return global_
-
-    def _require_available_symbol(self, name: ir.SymbolName) -> None:
-        names = {item.name for item in [*self.inner.globals, *self.inner.functions]}
-        if name in names:
-            raise ValueError("module symbol names must be unique")
 
 
 class FunctionBuilder(Builder[ir.Function]):
@@ -120,7 +118,7 @@ class FunctionBuilder(Builder[ir.Function]):
             raise ValueError("function already has a body")
         body = ir.Region()
         self.inner.body = body
-        return RegionBuilder(self._ctx, body)
+        return RegionBuilder(self._ctx, body, self.inner)
 
 
 class RegionBuilder(Builder[ir.Region]):
@@ -130,38 +128,30 @@ class RegionBuilder(Builder[ir.Region]):
         inner: The [`niro.ir.Region`][] under construction.
     """
 
-    def __init__(self, ctx: Ctx, region: ir.Region) -> None:
+    def __init__(self, ctx: Ctx, region: ir.Region, owner: ir.Function | ir.If) -> None:
         self._ctx = ctx
+        self._owner = owner
         self.inner: ir.Region = region
 
     def first_block(self) -> BlockBuilder:
         """Append the first block, deriving function input arguments."""
         if self.inner.blocks:
             raise ValueError("region already has a first block")
-        arg_types = self._function_input_types if self._is_function_body else ()
+        arg_types = (
+            self._owner.type.inputs if isinstance(self._owner, ir.Function) else ()
+        )
         return self.block(arg_types)
 
     def block(self, arg_types: Sequence[ir.Type] = ()) -> BlockBuilder:
         """Append a block with arguments of the given types."""
         if self.inner.blocks:
             raise ValueError("multiple blocks per region are not supported")
-        if self._is_function_body and tuple(arg_types) != self._function_input_types:
-            raise TypeError(
-                "entry block argument types must match function input types"
-            )
         args = tuple(self._ctx.new_value(type) for type in arg_types)
         block = ir.Block(arguments=args)
-        builder = BlockBuilder(self._ctx, block)
+        ir.verify_block_arguments(block, self._owner)
+        builder = BlockBuilder(self._ctx, block, self._owner)
         self.inner.blocks.append(block)
         return builder
-
-    @property
-    def _is_function_body(self) -> bool:
-        return self.inner is self._ctx.function.body
-
-    @property
-    def _function_input_types(self) -> tuple[ir.Type, ...]:
-        return self._ctx.function.type.inputs
 
 
 class BlockBuilder(Builder[ir.Block]):
@@ -175,8 +165,10 @@ class BlockBuilder(Builder[ir.Block]):
         self,
         ctx: Ctx,
         block: ir.Block,
+        owner: ir.Function | ir.If,
     ) -> None:
         self._ctx = ctx
+        self._owner = owner
         self.inner: ir.Block = block
 
     def _append_operation[Op: ir.Op](
@@ -188,6 +180,9 @@ class BlockBuilder(Builder[ir.Block]):
             raise ValueError("cannot append an operation after a block terminator")
         results = tuple(self._ctx.new_value(type) for type in result_types)
         op = create_op(results)
+        ir.verify_op(op)
+        if isinstance(op, (ir.Return, ir.Yield)):
+            ir.verify_terminator(op, self._owner)
         self.inner.operations.append(op)
         return op
 
@@ -314,19 +309,21 @@ class BlockBuilder(Builder[ir.Block]):
         result_types: Sequence[ir.Type] = (),
     ) -> IfBuilder:
         """Append a conditional and return its region builders."""
-        then_region = RegionBuilder(self._ctx, ir.Region())
-        else_region = RegionBuilder(self._ctx, ir.Region())
 
         def create(results: tuple[ir.Value, ...]) -> ir.If:
             return ir.If(
                 results=results,
                 condition=condition,
-                then_region=then_region.inner,
-                else_region=else_region.inner,
+                then_region=ir.Region(),
+                else_region=ir.Region(),
             )
 
         op = self._append_operation(result_types, create)
-        return IfBuilder(op, then_region, else_region)
+        return IfBuilder(
+            op,
+            RegionBuilder(self._ctx, op.then_region, op),
+            RegionBuilder(self._ctx, op.else_region, op),
+        )
 
     def call(
         self,
@@ -335,19 +332,15 @@ class BlockBuilder(Builder[ir.Block]):
     ) -> tuple[ir.Value, ...]:
         """Append a function call and return its results."""
         function = self._ctx.resolve_function(callee)
-        actual_types = tuple(argument.type for argument in arguments)
-        if actual_types != function.type.inputs:
-            raise TypeError(
-                f"call argument types {actual_types!r} do not match "
-                f"{function.type.inputs!r}"
-            )
 
         def create(results: tuple[ir.Value, ...]) -> ir.Call:
-            return ir.Call(
+            op = ir.Call(
                 callee=function.name,
                 arguments=tuple(arguments),
                 results=results,
             )
+            ir.verify_call(op, function)
+            return op
 
         op = self._append_operation(function.type.outputs, create)
         return op.results

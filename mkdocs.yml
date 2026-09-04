@@ -19,6 +19,7 @@ nav:
               - program: niro/ir/program.md
               - ops: niro/ir/ops.md
               - data: niro/ir/data.md
+              - verify: niro/ir/verify.md
           - onnx: niro/onnx.md
           - mlir: niro/mlir.md
 

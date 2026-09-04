@@ -139,6 +139,7 @@ def test_imports_single_node_graph(case: OneNodeCase) -> None:
     )
 
     module = import_onnx(helper.make_model(graph=graph))
+    ir.verify(module)
 
     function = module.functions[0]
     assert function.body is not None

@@ -43,14 +43,5 @@ class TensorType:
             return None
         return len(self.shape)
 
-    def __post_init__(self) -> None:
-        if self.shape is None:
-            return
-        for dim in self.shape:
-            if dim is None:
-                continue
-            if dim < 0:
-                raise ValueError("tensor dimension cannot be negative")
-
 
 type Type = ScalarType | TensorType
