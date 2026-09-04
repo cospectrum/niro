@@ -41,6 +41,7 @@ def test_ir_exports_verification_and_local_checks() -> None:
         check_function_type,
         check_op,
         check_symbol_name,
+        check_tensor_type,
         check_type,
         check_value,
         verify,
@@ -49,6 +50,7 @@ def test_ir_exports_verification_and_local_checks() -> None:
     assert ir.verify is verify
     assert ir.check_op is check_op
     assert ir.check_type is check_type
+    assert ir.check_tensor_type is check_tensor_type
     assert ir.check_value is check_value
     assert ir.check_function_type is check_function_type
     assert ir.check_symbol_name is check_symbol_name

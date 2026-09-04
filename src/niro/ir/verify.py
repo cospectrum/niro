@@ -91,22 +91,28 @@ def check_type(value_type: Type) -> None:
     match value_type:
         case ScalarType():
             pass
-        case TensorType(element_type, shape):
-            if not isinstance(element_type, ScalarType):
-                raise VerificationError("tensor element type must be a scalar type")
-            if shape is None:
-                return
-            if not isinstance(shape, tuple):
-                raise VerificationError("tensor shape must be a tuple or None")
-            for dimension in shape:
-                if dimension is None:
-                    continue
-                if type(dimension) is not int or dimension < 0:
-                    raise VerificationError(
-                        "tensor dimension must be a non-negative integer or None"
-                    )
+        case TensorType():
+            check_tensor_type(value_type)
         case _:
             raise VerificationError("value type must be a scalar or tensor type")
+
+
+def check_tensor_type(tensor_type: TensorType) -> None:
+    """Check a tensor type's element type and shape."""
+    if not isinstance(tensor_type.element_type, ScalarType):
+        raise VerificationError("tensor element type must be a scalar type")
+    shape = tensor_type.shape
+    if shape is None:
+        return
+    if not isinstance(shape, tuple):
+        raise VerificationError("tensor shape must be a tuple or None")
+    for dimension in shape:
+        if dimension is None:
+            continue
+        if type(dimension) is not int or dimension < 0:
+            raise VerificationError(
+                "tensor dimension must be a non-negative integer or None"
+            )
 
 
 def check_function_type(function_type: FunctionType) -> None:

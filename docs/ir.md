@@ -474,7 +474,8 @@ success:
 
 | Function | What it checks |
 | --- | --- |
-| `check_type(value_type)` | A `Type`, either a scalar or tensor value type |
+| `check_type(value_type)` | A `Type`, delegating tensors to `check_tensor_type` |
+| `check_tensor_type(tensor_type)` | A `TensorType` and its element type and shape |
 | `check_function_type(function_type)` | A `FunctionType` and its input and output value types |
 | `check_symbol_name(name)` | A `SymbolName` for a module-level function or global |
 | `check_attribute_name(name)` | An `AttributeName` used as a metadata key |

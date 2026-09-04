@@ -93,7 +93,11 @@ def test_accepts_empty_modules_and_recursive_calls() -> None:
         ir.TensorType(ir.ScalarType.F32, (True,)),
     ],
 )
-def test_checks_types_explicitly(value_type: ir.Type) -> None:
+def test_checks_tensor_types_directly_and_through_dispatch(
+    value_type: ir.TensorType,
+) -> None:
+    with pytest.raises(ir.VerificationError, match="non-negative integer"):
+        ir.check_tensor_type(value_type)
     with pytest.raises(ir.VerificationError, match="non-negative integer"):
         ir.check_type(value_type)
 
