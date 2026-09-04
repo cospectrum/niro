@@ -474,7 +474,10 @@ success:
 
 | Function | What it checks |
 | --- | --- |
-| `check_type(value_type)` | A scalar, tensor, or function type |
+| `check_type(value_type)` | A `Type`, either a scalar or tensor value type |
+| `check_function_type(function_type)` | A `FunctionType` and its input and output value types |
+| `check_symbol_name(name)` | A `SymbolName` for a module-level function or global |
+| `check_attribute_name(name)` | An `AttributeName` used as a metadata key |
 | `check_value(value)` | A value's non-negative ID and scalar or tensor type |
 | `check_function_signature(function)` | Name, signature, interface names, and attributes, allowing an unfinished body |
 | `check_global(global_)` | Name, type, initializer, and attributes |
@@ -483,6 +486,10 @@ success:
 | `check_block_arguments(block, owner)` | Function inputs or an argument-free `If` branch |
 | `check_terminator(op, owner)` | `Return` for a function or `Yield` for an `If`, with matching output types |
 | `check_symbol_available(module, name)` | Availability of a name for a new declaration |
+
+Checks follow IR types. Symbol names and attribute names have separate checks.
+Function interface names and unknown-operation names are fields checked with
+their owning IR object.
 
 The `owner` argument is a `Function` or `If`. Local checks accept only the context
 needed for their rule, such as a resolved callee or the enclosing region owner.

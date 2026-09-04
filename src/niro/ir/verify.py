@@ -16,7 +16,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import assert_never
 
-from niro.ir.data import Attributes, AttributeValue, Literal
+from niro.ir.data import AttributeName, Attributes, AttributeValue, Literal
 from niro.ir.ops import (
     Add,
     Call,
@@ -86,8 +86,8 @@ def verify(module: Module) -> None:
             verifier.function(function)
 
 
-def check_type(value_type: Type | FunctionType) -> None:
-    """Check a scalar, tensor, or function type, including nested types."""
+def check_type(value_type: Type) -> None:
+    """Check a scalar or tensor value type."""
     match value_type:
         case ScalarType():
             pass
@@ -105,32 +105,42 @@ def check_type(value_type: Type | FunctionType) -> None:
                     raise VerificationError(
                         "tensor dimension must be a non-negative integer or None"
                     )
-        case FunctionType(inputs, outputs):
-            for nested_type in (*inputs, *outputs):
-                _check_value_type(nested_type)
         case _:
-            raise VerificationError("unsupported IR type")
+            raise VerificationError("value type must be a scalar or tensor type")
 
 
-def _check_value_type(value_type: Type) -> None:
-    if not isinstance(value_type, (ScalarType, TensorType)):
-        raise VerificationError("value type must be a scalar or tensor type")
-    check_type(value_type)
+def check_function_type(function_type: FunctionType) -> None:
+    """Check a function type's input and output value types."""
+    if not isinstance(function_type, FunctionType):
+        raise VerificationError("function signature must be a FunctionType")
+    for value_type in (*function_type.inputs, *function_type.outputs):
+        check_type(value_type)
+
+
+def check_symbol_name(name: SymbolName) -> None:
+    """Check the name of a module-level function or global symbol."""
+    if not isinstance(name, str) or not name:
+        raise VerificationError("symbol name must be a non-empty string")
+
+
+def check_attribute_name(name: AttributeName) -> None:
+    """Check an attribute key."""
+    if not isinstance(name, str) or not name:
+        raise VerificationError("attribute name must be a non-empty string")
 
 
 def check_value(value: Value) -> None:
     """Check an SSA value's ID and type, without checking its definition or scope."""
     if type(value.id) is not int or value.id < 0:
         raise VerificationError("value ID must be a non-negative integer")
-    _check_value_type(value.type)
+    check_type(value.type)
 
 
 def check_function_signature(function: Function) -> None:
     """Check function metadata and signature, allowing an unfinished body."""
-    _check_name(function.name, "function name")
-    if not isinstance(function.type, FunctionType):
-        raise VerificationError("function signature must be a FunctionType")
-    check_type(function.type)
+    with _at("function name"):
+        check_symbol_name(function.name)
+    check_function_type(function.type)
     for kind, names, types in (
         ("input", function.input_names, function.type.inputs),
         ("output", function.output_names, function.type.outputs),
@@ -140,22 +150,23 @@ def check_function_signature(function: Function) -> None:
         if len(names) != len(types):
             raise VerificationError(f"{kind} names must match {kind} arity")
         for name in names:
-            if name is not None:
-                _check_name(name, f"{kind} name")
+            if name is not None and (not isinstance(name, str) or not name):
+                raise VerificationError(f"{kind} name must be a non-empty string")
     _check_attributes(function.attributes)
 
 
 def check_global(global_: Global) -> None:
     """Check a global's name, type, initializer, and attributes."""
-    _check_name(global_.name, "global name")
-    _check_value_type(global_.type)
+    with _at("global name"):
+        check_symbol_name(global_.name)
+    check_type(global_.type)
     _check_literal(global_.initializer, global_.type)
     _check_attributes(global_.attributes)
 
 
 def check_symbol_available(module: Module, name: SymbolName) -> None:
     """Check a new declaration's name before inserting it into a module."""
-    _check_name(name, "symbol name")
+    check_symbol_name(name)
     if any(symbol.name == name for symbol in (*module.globals, *module.functions)):
         raise VerificationError("module symbol names must be unique")
 
@@ -190,7 +201,8 @@ def check_op(op: Op) -> None:
         case Const():
             _check_literal(op.literal, op.result.type)
         case GetGlobal(name=name):
-            _check_name(name, "global name")
+            with _at("global name"):
+                check_symbol_name(name)
         case Transpose():
             if op.result.type != transpose_result_type(op.operand.type, op.permutation):
                 raise VerificationError(
@@ -202,21 +214,29 @@ def check_op(op: Op) -> None:
                 raise VerificationError(
                     f"{operation} operands and result must have the same type"
                 )
-            _check_numeric(op.lhs.type, operation)
+            element_type = (
+                op.lhs.type.element_type
+                if isinstance(op.lhs.type, TensorType)
+                else op.lhs.type
+            )
+            if element_type is ScalarType.BOOL:
+                raise VerificationError(f"{operation} does not support boolean values")
         case MatMul():
             if op.result.type != matmul_result_type(op.lhs.type, op.rhs.type):
                 raise VerificationError(
                     "matmul result type does not match its operands"
                 )
         case Call(callee=callee):
-            _check_name(callee, "callee name")
+            with _at("callee name"):
+                check_symbol_name(callee)
         case Return() | Yield():
             pass
         case If(condition=condition):
             if condition.type is not ScalarType.BOOL:
                 raise VerificationError("if condition must be boolean")
         case UnknownOp(name=name, attributes=attributes):
-            _check_name(name, "UnknownOp name")
+            if not isinstance(name, str) or not name:
+                raise VerificationError("UnknownOp name must be a non-empty string")
             _check_attributes(attributes)
         case _ as unreachable:
             assert_never(unreachable)
@@ -259,7 +279,7 @@ def transpose_result_type(
     operand_type: Type, permutation: tuple[int, ...]
 ) -> TensorType:
     """Check a transpose's inputs and derive its result type."""
-    _check_value_type(operand_type)
+    check_type(operand_type)
     if not isinstance(operand_type, TensorType):
         raise VerificationError("transpose operand must be a tensor")
     rank = len(permutation) if operand_type.shape is None else len(operand_type.shape)
@@ -279,28 +299,21 @@ def transpose_result_type(
 
 def matmul_result_type(lhs: Type, rhs: Type) -> TensorType:
     """Check numeric rank-two matrix inputs and derive the result type."""
-    _check_value_type(lhs)
-    _check_value_type(rhs)
+    check_type(lhs)
+    check_type(rhs)
     if not isinstance(lhs, TensorType) or not isinstance(rhs, TensorType):
         raise VerificationError("matmul operands must be tensors")
     if lhs.rank != 2 or rhs.rank != 2:
         raise VerificationError("matmul operands must be rank-two tensors")
     if lhs.element_type is not rhs.element_type:
         raise VerificationError("matmul operand element types must match")
-    _check_numeric(lhs, "matmul")
+    if lhs.element_type is ScalarType.BOOL:
+        raise VerificationError("matmul does not support boolean values")
     assert lhs.shape is not None and rhs.shape is not None
     lhs_inner, rhs_inner = lhs.shape[1], rhs.shape[0]
     if lhs_inner is not None and rhs_inner is not None and lhs_inner != rhs_inner:
         raise VerificationError("matmul contracting dimensions must match")
     return TensorType(lhs.element_type, (lhs.shape[0], rhs.shape[1]))
-
-
-def _check_numeric(value_type: Type, operation: str) -> None:
-    element_type = (
-        value_type.element_type if isinstance(value_type, TensorType) else value_type
-    )
-    if element_type is ScalarType.BOOL:
-        raise VerificationError(f"{operation} does not support boolean values")
 
 
 def _check_literal(literal: Literal, value_type: Type) -> None:
@@ -342,14 +355,9 @@ def _check_literal(literal: Literal, value_type: Type) -> None:
     raise VerificationError("literal does not match its type")
 
 
-def _check_name(name: str, kind: str) -> None:
-    if not isinstance(name, str) or not name:
-        raise VerificationError(f"{kind} must be a non-empty string")
-
-
 def _check_attributes(attributes: Attributes) -> None:
     for name, value in attributes.items():
-        _check_name(name, "attribute name")
+        check_attribute_name(name)
         with _at(f"attribute {name!r}"):
             _check_attribute_value(value)
 

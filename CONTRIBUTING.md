@@ -97,6 +97,9 @@ compromising correctness or output quality. When contributing:
   `src/niro/ir/verify.py`; builders call its local `check_*` functions before
   insertion, and `niro.ir.verify` checks complete modules. Use assertions for
   internal invariants, and test meaningful behavior and validity rules.
+- Give each check or verifier one IR type as its subject. Check field-specific
+  rules with their owning IR type; avoid generic validators controlled by a
+  diagnostic label.
 - Keep documentation concise and introduce concepts before relying on them.
 
 [uv]: https://docs.astral.sh/uv/

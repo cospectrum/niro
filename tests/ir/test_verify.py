@@ -91,12 +91,45 @@ def test_accepts_empty_modules_and_recursive_calls() -> None:
     [
         ir.TensorType(ir.ScalarType.F32, (-1,)),
         ir.TensorType(ir.ScalarType.F32, (True,)),
-        ir.FunctionType((), (ir.TensorType(ir.ScalarType.I32, (-1,)),)),
     ],
 )
-def test_checks_types_explicitly(value_type: ir.Type | ir.FunctionType) -> None:
+def test_checks_types_explicitly(value_type: ir.Type) -> None:
     with pytest.raises(ir.VerificationError, match="non-negative integer"):
         ir.check_type(value_type)
+
+
+def test_checks_function_types_separately_from_value_types() -> None:
+    function_type = ir.FunctionType((ir.ScalarType.I32,), (ir.ScalarType.F32,))
+    ir.check_function_type(function_type)
+    with pytest.raises(ir.VerificationError, match="scalar or tensor type"):
+        ir.check_type(cast(ir.Type, function_type))
+    with pytest.raises(ir.VerificationError, match="non-negative integer"):
+        ir.check_function_type(
+            ir.FunctionType((), (ir.TensorType(ir.ScalarType.I32, (-1,)),))
+        )
+
+
+@pytest.mark.parametrize("name", ["", cast(str, None)])
+def test_checks_symbol_and_attribute_names(name: str) -> None:
+    with pytest.raises(ir.VerificationError, match="symbol name"):
+        ir.check_symbol_name(name)
+    with pytest.raises(ir.VerificationError, match="attribute name"):
+        ir.check_attribute_name(name)
+
+
+@pytest.mark.parametrize(
+    "operation, error",
+    [
+        (ir.GetGlobal("", value(0)), "global name"),
+        (ir.Call("", (), ()), "callee name"),
+        (ir.UnknownOp("", (), ()), "UnknownOp name"),
+    ],
+)
+def test_reports_name_errors_with_operation_context(
+    operation: ir.Op, error: str
+) -> None:
+    with pytest.raises(ir.VerificationError, match=error):
+        ir.check_op(operation)
 
 
 @pytest.mark.parametrize(

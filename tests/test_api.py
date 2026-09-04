@@ -36,12 +36,23 @@ def test_ir_exports_program() -> None:
 
 def test_ir_exports_verification_and_local_checks() -> None:
     from niro import ir
-    from niro.ir.verify import check_op, check_type, check_value, verify
+    from niro.ir.verify import (
+        check_attribute_name,
+        check_function_type,
+        check_op,
+        check_symbol_name,
+        check_type,
+        check_value,
+        verify,
+    )
 
     assert ir.verify is verify
     assert ir.check_op is check_op
     assert ir.check_type is check_type
     assert ir.check_value is check_value
+    assert ir.check_function_type is check_function_type
+    assert ir.check_symbol_name is check_symbol_name
+    assert ir.check_attribute_name is check_attribute_name
     assert {
         "check_global",
         "check_function_signature",
