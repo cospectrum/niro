@@ -50,6 +50,7 @@ extra_css:
   - stylesheets/extra.css
 
 markdown_extensions:
+  - admonition
   - pymdownx.highlight:
       anchor_linenums: true
       line_spans: __span
@@ -66,6 +67,10 @@ plugins:
         python:
           paths: [src]
           options:
+            # Only needed when a class member shadows a module-level import,
+            # e.g. a `ir` attribute next to `import niro.ir as ir`.
+            # extensions:
+            #   - scripts/griffe/module_scope_annotations.py:ModuleScopeAnnotations
             docstring_style: google
             members_order: source
             merge_init_into_class: true

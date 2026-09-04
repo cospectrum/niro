@@ -14,10 +14,10 @@ def test_lowers_tensor_add() -> None:
         type=ir.FunctionType((tensor_type, tensor_type), (tensor_type,)),
     )
     block = function.region().block((tensor_type, tensor_type))
-    result = block.add(*block.ir.arguments)
+    result = block.add(*block.inner.arguments)
     block.return_(result)
 
-    text = format_mlir(export_mlir(module.ir))
+    text = format_mlir(export_mlir(module.inner))
 
     assert "func.func @model" in text
     assert "%2 = arith.addf %0, %1 : tensor<2x2xf32>" in text
@@ -34,10 +34,10 @@ def test_lowers_tensor_weight_to_private_immutable_global() -> None:
     )
     block = function.region().block((tensor_type,))
     weight = block.tensor(data, tensor_type)
-    result = block.matmul(block.ir.arguments[0], weight)
+    result = block.matmul(block.inner.arguments[0], weight)
     block.return_(result)
 
-    lowered = export_mlir(module.ir)
+    lowered = export_mlir(module.inner)
 
     operations = list(lowered.body.block.ops)
     global_ = operations[0]
@@ -58,16 +58,16 @@ def test_lowers_private_helper_and_call() -> None:
         type=ir.FunctionType((ir.ScalarType.I32,), (ir.ScalarType.I32,)),
     )
     helper_block = helper.region().block((ir.ScalarType.I32,))
-    helper_block.return_(helper_block.ir.arguments[0])
+    helper_block.return_(helper_block.inner.arguments[0])
     main = module.function(
         name="model",
         type=ir.FunctionType((ir.ScalarType.I32,), (ir.ScalarType.I32,)),
     )
     main_block = main.region().block((ir.ScalarType.I32,))
-    (result,) = main_block.call(helper, main_block.ir.arguments)
+    (result,) = main_block.call(helper, main_block.inner.arguments)
     main_block.return_(result)
 
-    text = format_mlir(export_mlir(module.ir))
+    text = format_mlir(export_mlir(module.inner))
 
     assert "func.func @helper" in text
     assert "func.func @model" in text
@@ -83,10 +83,10 @@ def test_lowers_static_transpose() -> None:
         type=ir.FunctionType((input_type,), (output_type,)),
     )
     block = function.region().block((input_type,))
-    result = block.transpose(block.ir.arguments[0], [1, 0])
+    result = block.transpose(block.inner.arguments[0], [1, 0])
     block.return_(result)
 
-    text = format_mlir(export_mlir(module.ir))
+    text = format_mlir(export_mlir(module.inner))
 
     assert "%1 = tensor.empty() : tensor<3x2xf32>" in text
     assert "linalg.transpose" in text
@@ -132,11 +132,11 @@ def test_lowers_if_and_yield() -> None:
 def test_preserves_metadata_with_niro_namespace() -> None:
     module = ModuleBuilder()
     function = module.function(name="model", type=ir.FunctionType((), ()))
-    function.ir.attributes["note"] = "function"
+    function.inner.attributes["note"] = "function"
     function.region().block().return_()
-    module.ir.attributes["version"] = 1
+    module.inner.attributes["version"] = 1
 
-    text = format_mlir(export_mlir(module.ir))
+    text = format_mlir(export_mlir(module.inner))
 
     assert "niro.version = 1 : i64" in text
     assert 'niro.note = "function"' in text
@@ -151,7 +151,7 @@ def test_rejects_unknown_operation() -> None:
     block = function.region().block((ir.ScalarType.F32,))
     (result,) = block.unknown_op(
         name="onnx.Relu",
-        operands=block.ir.arguments,
+        operands=block.inner.arguments,
         result_types=[ir.ScalarType.F32],
     )
     block.return_(result)
@@ -160,7 +160,7 @@ def test_rejects_unknown_operation() -> None:
         NotImplementedError,
         match="cannot lower unknown operation to MLIR: onnx.Relu",
     ):
-        export_mlir(module.ir)
+        export_mlir(module.inner)
 
 
 def test_rejects_dynamic_matmul() -> None:
@@ -175,8 +175,8 @@ def test_rejects_dynamic_matmul() -> None:
     )
     block = function.region().block((tensor_type, tensor_type))
     result = block.matmul(
-        block.ir.arguments[0],
-        block.ir.arguments[1],
+        block.inner.arguments[0],
+        block.inner.arguments[1],
     )
     block.return_(result)
 
@@ -184,4 +184,4 @@ def test_rejects_dynamic_matmul() -> None:
         NotImplementedError,
         match="matmul requires a static ranked tensor",
     ):
-        export_mlir(module.ir)
+        export_mlir(module.inner)

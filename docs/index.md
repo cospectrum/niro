@@ -1,7 +1,12 @@
 # Niro
 
-Niro compiles computation graphs from ONNX and future input formats through a
-unified, strongly typed SSA IR. Its initial output target is MLIR.
+Niro compiles computation graphs from [ONNX] (TensorFlow, PyTorch, and others
+planned) through one unified, strongly typed SSA IR. [MLIR] is the primary
+target; WebAssembly, [GIMPLE], and other backends may follow.
+
+!!! warning "Work in progress"
+
+    Niro is at an early stage and is not yet ready for production use.
 
 ## Install
 
@@ -9,19 +14,34 @@ unified, strongly typed SSA IR. Its initial output target is MLIR.
 uv tool install git+https://github.com/cospectrum/niro.git
 ```
 
-## Use
+## Usage
 
-Inspect an ONNX model's entry-point signature:
+Compile a model to textual MLIR:
+
+```sh
+niro emit mlir model.onnx -o model.mlir
+```
+
+Input and output default to the standard streams, so Niro composes with other
+tools. Pass `--input-format` when there is no file extension to infer it from:
+
+```sh
+niro emit mlir --input-format onnx < model.onnx | mlir-opt
+```
+
+Inspect a model's entry-point signature:
 
 ```sh
 niro inspect signature model.onnx
 ```
 
-Emit textual MLIR:
+## Next steps
 
-```sh
-niro emit mlir model.onnx
-```
+- [IR specification](ir.md) — the types, values, and operations Niro compiles through.
+- [Python API](niro/index.md) — construct IR directly with [`niro.builder`](niro/builder.md).
+- [Contributing](https://github.com/cospectrum/niro/blob/main/CONTRIBUTING.md) — set up the
+  development environment and run the checks.
 
-Start with the [IR reference](ir.md), browse the [Python API](niro/index.md),
-or read the [contribution guide](https://github.com/cospectrum/niro/blob/main/CONTRIBUTING.md).
+[GIMPLE]: https://gcc.gnu.org/onlinedocs/gccint/GIMPLE.html
+[MLIR]: https://mlir.llvm.org/
+[ONNX]: https://onnx.ai/onnx/
