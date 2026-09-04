@@ -283,7 +283,10 @@ its shape and element type.
 `GetGlobal` references an immutable module global as an SSA value:
 
 ```python
-weight = GetGlobal(name="weight", result=weight_value)
+Global(name="weight", type=weight_type, initializer=weight_data)
+
+result = Value(ValueId(0), weight_type)
+GetGlobal(name="weight", result=result)
 ```
 
 The referenced symbol must name a global and its type must match the result.
