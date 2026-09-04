@@ -1,0 +1,79 @@
+site_name: Niro
+site_description: Compiler for machine learning models targeting MLIR and other backends
+site_url: https://cospectrum.github.io/niro/
+repo_name: cospectrum/niro
+repo_url: https://github.com/cospectrum/niro
+edit_uri: edit/main/docs/
+
+nav:
+  - Getting started: index.md
+  - IR specification: ir.md
+  - Python API:
+      - niro:
+          - niro/index.md
+          - builder: niro/builder.md
+          - ir:
+              - niro/ir/index.md
+              - types: niro/ir/types.md
+              - values: niro/ir/values.md
+              - program: niro/ir/program.md
+              - ops: niro/ir/ops.md
+              - data: niro/ir/data.md
+          - onnx: niro/onnx.md
+          - mlir: niro/mlir.md
+
+theme:
+  name: material
+  variant: classic
+  features:
+    - content.code.copy
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - navigation.tracking
+    - search.highlight
+    - search.suggest
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.superfences
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            members_order: source
+            merge_init_into_class: true
+            separate_signature: true
+            show_root_full_path: false
+            show_root_heading: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+            show_source: true
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true

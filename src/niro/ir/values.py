@@ -1,4 +1,7 @@
-"""SSA values in Niro IR."""
+"""SSA values in Niro IR.
+
+Public objects are re-exported from [`niro.ir`][].
+"""
 
 from __future__ import annotations
 

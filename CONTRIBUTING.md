@@ -38,11 +38,25 @@ Run the complete local CI workflow before submitting a change:
 nix run .#ci
 ```
 
-The complete workflow runs tests with branch coverage, the end-to-end suite,
-type checking, formatting, linting, and checks for GitHub Actions workflows.
-
 Unit tests mirror the source tree under `tests/`. End-to-end tests live under
 `e2e/`, grouped by the interface or workflow they exercise.
+
+## Documentation
+
+Preview the documentation with Zensical while editing it:
+
+```sh
+uv run zensical serve
+```
+
+Build it with Zensical:
+
+```sh
+uv run zensical build --clean
+```
+
+Write Python docstrings in [Google style][google-docstrings]. Use cross-references
+for Python objects and modules so generated API references are clickable.
 
 ## Example models
 
@@ -70,9 +84,6 @@ Or save it for repeated use:
 uv run scripts/onnx/generate_linear.py > linear.onnx
 ```
 
-Root-level `.onnx` files are ignored. Models intended as committed fixtures may
-live in a suitable subdirectory.
-
 ## Style guide
 
 We want the project to remain small, direct, and easy to understand without
@@ -87,3 +98,4 @@ compromising correctness or output quality. When contributing:
 - Keep documentation concise and introduce concepts before relying on them.
 
 [uv]: https://docs.astral.sh/uv/
+[google-docstrings]: https://google.github.io/styleguide/pyguide.html#38-comments-and-docstrings

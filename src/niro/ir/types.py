@@ -1,4 +1,7 @@
-"""Types in the Niro intermediate representation."""
+"""Types in the Niro intermediate representation.
+
+Public objects are re-exported from [`niro.ir`][].
+"""
 
 from __future__ import annotations
 

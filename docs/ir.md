@@ -96,6 +96,83 @@ Module
             └── Operation
 ```
 
+### `Module`
+
+A module owns globals and functions:
+
+```python
+module = Module()
+```
+
+Functions and globals share one symbol namespace. Their names must be unique
+within the module.
+
+#### `SymbolName`
+
+`SymbolName` names a module-level declaration. References to functions and
+globals are resolved by name. Operations are unnamed; their SSA results are
+identified by `ValueId`.
+
+### `Global`
+
+A global is an immutable initialized module value:
+
+```python
+weight = Global(name="weight", type=weight_type, initializer=weight_data)
+```
+
+### `Function`
+
+A function has a name, signature, and optional body:
+
+#### Function type
+
+`FunctionType` contains the input and output types of a function:
+
+```python
+signature = FunctionType(
+    inputs=(ScalarType.F32, ScalarType.F32),
+    outputs=(ScalarType.F32,),
+)
+```
+
+A function may have any number of inputs and outputs, including zero.
+
+#### Declaration or definition
+
+```python
+external = Function(
+    name="print_f32",
+    type=FunctionType(inputs=(ScalarType.F32,), outputs=()),
+    body=None,
+)
+```
+
+A function without a body is declared here but implemented elsewhere. A
+defined function has an entry block whose arguments represent the inputs
+described by its `FunctionType`.
+
+`input_names` and `output_names` optionally describe the function's public
+interface. A present sequence has the same arity as its side of the function
+type. Each position contains either a non-empty name or `None` for an unnamed
+item. These names are metadata and do not replace numeric SSA value IDs.
+
+### `Region`
+
+A region owns blocks:
+
+```python
+entry = Block()
+body = Region(blocks=[entry])
+```
+
+A function body is a region. Some operations, such as `If`, also own nested
+regions. A nested region may use values visible at the containing operation.
+Values created inside it can leave only through results of that operation.
+
+Niro currently requires a single block in regions used for structured control
+flow. General multi-block control flow may be supported later.
+
 ### `Block`
 
 A block contains input values followed by an ordered sequence of operations:
@@ -117,73 +194,6 @@ tuple(
 
 An external function has no body and therefore no entry block or block
 arguments. All blocks in a function share its value-ID namespace.
-
-### `Region`
-
-A region owns blocks:
-
-```python
-entry = Block()
-body = Region(blocks=[entry])
-```
-
-A function body is a region. Some operations, such as `If`, also own nested
-regions. A nested region may use values visible at the containing operation.
-Values created inside it can leave only through results of that operation.
-
-Niro currently requires a single block in regions used for structured control
-flow. General multi-block control flow may be supported later.
-
-### `SymbolName`
-
-`SymbolName` names a module-level declaration. Functions and globals share one
-symbol namespace and references to either are resolved by name. Operations are
-unnamed; their SSA results are identified by `ValueId`.
-
-### `FunctionType`
-
-`FunctionType` contains the input and output types of a function:
-
-```python
-signature = FunctionType(
-    inputs=(ScalarType.F32, ScalarType.F32),
-    outputs=(ScalarType.F32,),
-)
-```
-
-A function may have any number of inputs and outputs, including zero.
-
-### `Function`
-
-A function has a name, signature, and optional body:
-
-```python
-external = Function(
-    name="print_f32",
-    type=FunctionType(inputs=(ScalarType.F32,), outputs=()),
-    body=None,
-)
-```
-
-A function without a body is declared here but implemented elsewhere. A
-defined function has an entry block whose arguments represent the inputs
-described by its `FunctionType`.
-
-`input_names` and `output_names` optionally describe the function's public
-interface. A present sequence has the same arity as its side of the function
-type. Each position contains either a non-empty name or `None` for an unnamed
-item. These names are metadata and do not replace numeric SSA value IDs.
-
-### `Global` and `Module`
-
-A global is an immutable initialized module value:
-
-```python
-weight = Global(name="weight", type=weight_type, initializer=weight_data)
-module = Module(globals=[weight], functions=[external])
-```
-
-Global and function names share a namespace and must be unique within a module.
 
 ### `Op`
 

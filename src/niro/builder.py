@@ -40,10 +40,10 @@ class Ctx:
 
 
 class ModuleBuilder:
-    """Build a module.
+    """Builder for [`niro.ir.Module`][].
 
     Attributes:
-        ir: The `ir.Module` under construction.
+        ir: The [`niro.ir.Module`][] under construction.
     """
 
     def __init__(self) -> None:
@@ -86,10 +86,10 @@ class ModuleBuilder:
 
 
 class FunctionBuilder:
-    """Build a function.
+    """Builder for [`niro.ir.Function`][].
 
     Attributes:
-        ir: The `ir.Function` under construction.
+        ir: The [`niro.ir.Function`][] under construction.
     """
 
     def __init__(
@@ -110,10 +110,10 @@ class FunctionBuilder:
 
 
 class RegionBuilder:
-    """Build a region.
+    """Builder for [`niro.ir.Region`][].
 
     Attributes:
-        ir: The `ir.Region` under construction.
+        ir: The [`niro.ir.Region`][] under construction.
     """
 
     def __init__(self, ctx: Ctx, region: ir.Region) -> None:
@@ -151,10 +151,10 @@ class RegionBuilder:
 
 
 class BlockBuilder:
-    """Build a block.
+    """Builder for [`niro.ir.Block`][].
 
     Attributes:
-        ir: The `ir.Block` under construction.
+        ir: The [`niro.ir.Block`][] under construction.
     """
 
     def __init__(
@@ -358,12 +358,12 @@ class BlockBuilder:
 
 
 class IfBuilder:
-    """Build the regions of a conditional.
+    """Builder for the regions of [`niro.ir.If`][].
 
     Attributes:
-        ir: The `ir.If` under construction.
-        then_region: The `RegionBuilder` for the taken branch.
-        else_region: The `RegionBuilder` for the other branch.
+        ir: The [`niro.ir.If`][] under construction.
+        then_region: The [`niro.builder.RegionBuilder`][] for the taken branch.
+        else_region: The [`niro.builder.RegionBuilder`][] for the other branch.
     """
 
     def __init__(

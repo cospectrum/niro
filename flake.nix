@@ -79,6 +79,9 @@
               echo ":: Lint"
               uv run --no-sync ruff check
 
+              echo ":: Build documentation"
+              uv run --no-sync zensical build --clean
+
               echo ":: Check GitHub Actions workflows"
               actionlint
 

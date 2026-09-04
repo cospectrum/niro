@@ -1,6 +1,6 @@
 # niro
 
-[![GitHub](https://img.shields.io/badge/GitHub-cospectrum%2Fniro-0969DA?logo=github)](https://github.com/cospectrum/niro)
+[![GitHub](https://img.shields.io/badge/GitHub-cospectrum%2Fniro-4C1D95?logo=github)](https://github.com/cospectrum/niro)
 [![CI](https://github.com/cospectrum/niro/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/cospectrum/niro/actions/workflows/ci.yml?query=branch%3Amain)
 [![Coverage Status](https://coveralls.io/repos/github/cospectrum/niro/badge.svg?branch=main)](https://coveralls.io/github/cospectrum/niro?branch=main)
 
@@ -13,7 +13,7 @@ PyTorch, and other frontends through one unified SSA IR.
 The initial target is [MLIR], primarily using [xDSL]. Future backends may
 include WebAssembly, [GIMPLE], and others.
 
-The Niro IR is described in [docs/ir.md](docs/ir.md).
+[Documentation](https://cospectrum.github.io/niro/)
 
 ## Installation
 

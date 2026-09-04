@@ -1,4 +1,7 @@
-"""Literals and attributes stored in Niro IR."""
+"""Literals and attributes stored in Niro IR.
+
+Public objects are re-exported from [`niro.ir`][].
+"""
 
 from __future__ import annotations
 
