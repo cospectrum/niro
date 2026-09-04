@@ -94,9 +94,9 @@ compromising correctness or output quality. When contributing:
 - Use type hints throughout Python code and derive redundant information rather
   than storing it.
 - Keep IR dataclasses free of validation. Implement IR validity rules in
-  `src/niro/ir/verify.py`; builders call its local verifiers before insertion,
-  and `niro.ir.verify` checks complete modules. Use assertions for internal
-  invariants, and test meaningful behavior and validity rules.
+  `src/niro/ir/verify.py`; builders call its local `check_*` functions before
+  insertion, and `niro.ir.verify` checks complete modules. Use assertions for
+  internal invariants, and test meaningful behavior and validity rules.
 - Keep documentation concise and introduce concepts before relying on them.
 
 [uv]: https://docs.astral.sh/uv/

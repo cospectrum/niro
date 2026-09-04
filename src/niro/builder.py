@@ -34,7 +34,7 @@ class Ctx:
 
     def new_value(self, type: ir.Type) -> ir.Value:
         value = ir.Value(ir.ValueId(self._next_value_id), type)
-        ir.verify_value(value)
+        ir.check_value(value)
         self._next_value_id += 1
         return value
 
@@ -74,7 +74,7 @@ class ModuleBuilder(Builder[ir.Module]):
         attributes: Mapping[ir.AttributeName, ir.AttributeValue] | None = None,
     ) -> FunctionBuilder:
         """Declare a function and return its builder."""
-        ir.verify_symbol_available(self.inner, name)
+        ir.check_symbol_available(self.inner, name)
         fn = ir.Function(
             name=name,
             type=type,
@@ -82,7 +82,7 @@ class ModuleBuilder(Builder[ir.Module]):
             output_names=None if output_names is None else tuple(output_names),
             attributes=dict(attributes or {}),
         )
-        ir.verify_function_signature(fn)
+        ir.check_function_signature(fn)
         self.inner.functions.append(fn)
         return FunctionBuilder(Ctx(self.inner, fn), fn)
 
@@ -90,9 +90,9 @@ class ModuleBuilder(Builder[ir.Module]):
         self, name: ir.SymbolName, type: ir.Type, initializer: ir.Literal
     ) -> ir.Global:
         """Declare and return an initialized global."""
-        ir.verify_symbol_available(self.inner, name)
+        ir.check_symbol_available(self.inner, name)
         global_ = ir.Global(name, type, initializer)
-        ir.verify_global(global_)
+        ir.check_global(global_)
         self.inner.globals.append(global_)
         return global_
 
@@ -148,7 +148,7 @@ class RegionBuilder(Builder[ir.Region]):
             raise ValueError("multiple blocks per region are not supported")
         args = tuple(self._ctx.new_value(type) for type in arg_types)
         block = ir.Block(arguments=args)
-        ir.verify_block_arguments(block, self._owner)
+        ir.check_block_arguments(block, self._owner)
         builder = BlockBuilder(self._ctx, block, self._owner)
         self.inner.blocks.append(block)
         return builder
@@ -180,9 +180,9 @@ class BlockBuilder(Builder[ir.Block]):
             raise ValueError("cannot append an operation after a block terminator")
         results = tuple(self._ctx.new_value(type) for type in result_types)
         op = create_op(results)
-        ir.verify_op(op)
+        ir.check_op(op)
         if isinstance(op, (ir.Return, ir.Yield)):
-            ir.verify_terminator(op, self._owner)
+            ir.check_terminator(op, self._owner)
         self.inner.operations.append(op)
         return op
 
@@ -339,7 +339,7 @@ class BlockBuilder(Builder[ir.Block]):
                 arguments=tuple(arguments),
                 results=results,
             )
-            ir.verify_call(op, function)
+            ir.check_call_signature(op, function)
             return op
 
         op = self._append_operation(function.type.outputs, create)

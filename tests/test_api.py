@@ -34,19 +34,19 @@ def test_ir_exports_program() -> None:
     )
 
 
-def test_ir_exports_verifiers() -> None:
+def test_ir_exports_verification_and_local_checks() -> None:
     from niro import ir
-    from niro.ir.verify import verify, verify_op, verify_type, verify_value
+    from niro.ir.verify import check_op, check_type, check_value, verify
 
     assert ir.verify is verify
-    assert ir.verify_op is verify_op
-    assert ir.verify_type is verify_type
-    assert ir.verify_value is verify_value
+    assert ir.check_op is check_op
+    assert ir.check_type is check_type
+    assert ir.check_value is check_value
     assert {
-        "verify_global",
-        "verify_function_signature",
-        "verify_terminator",
-        "verify_call",
+        "check_global",
+        "check_function_signature",
+        "check_terminator",
+        "check_call_signature",
     } <= set(ir.__all__)
 
 

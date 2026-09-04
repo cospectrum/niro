@@ -1,9 +1,9 @@
 """Verification rules and checked result-type inference for Niro IR.
 
-Local verifiers check objects during construction. [`verify`][niro.ir.verify.verify]
-checks a complete module, including symbols, SSA scope, and nested regions.
-All verifiers leave their inputs unchanged and raise [`VerificationError`][niro.ir.VerificationError]
-on invalid IR.
+The ``check_*`` functions check local rules during construction.
+[`verify`][niro.ir.verify.verify] checks a complete module, including symbols,
+SSA scope, and nested regions. Both leave their inputs unchanged and raise
+[`VerificationError`][niro.ir.VerificationError] on invalid IR.
 
 Re-exported in [`niro.ir`][].
 """
@@ -67,7 +67,7 @@ def verify(module: Module) -> None:
         raise TypeError("verify expects a Module")
 
     with _at("module"):
-        _verify_attributes(module.attributes)
+        _check_attributes(module.attributes)
     symbols: dict[SymbolName, Global | Function] = {}
     for symbol in (*module.globals, *module.functions):
         if symbol.name in symbols:
@@ -78,7 +78,7 @@ def verify(module: Module) -> None:
 
     for global_ in module.globals:
         with _at(f"global {global_.name!r}"):
-            verify_global(global_)
+            check_global(global_)
 
     verifier = _Verifier(symbols)
     for function in module.functions:
@@ -86,7 +86,7 @@ def verify(module: Module) -> None:
             verifier.function(function)
 
 
-def verify_type(value_type: Type | FunctionType) -> None:
+def check_type(value_type: Type | FunctionType) -> None:
     """Check a scalar, tensor, or function type, including nested types."""
     match value_type:
         case ScalarType():
@@ -107,30 +107,30 @@ def verify_type(value_type: Type | FunctionType) -> None:
                     )
         case FunctionType(inputs, outputs):
             for nested_type in (*inputs, *outputs):
-                _verify_value_type(nested_type)
+                _check_value_type(nested_type)
         case _:
             raise VerificationError("unsupported IR type")
 
 
-def _verify_value_type(value_type: Type) -> None:
+def _check_value_type(value_type: Type) -> None:
     if not isinstance(value_type, (ScalarType, TensorType)):
         raise VerificationError("value type must be a scalar or tensor type")
-    verify_type(value_type)
+    check_type(value_type)
 
 
-def verify_value(value: Value) -> None:
+def check_value(value: Value) -> None:
     """Check an SSA value's ID and type, without checking its definition or scope."""
     if type(value.id) is not int or value.id < 0:
         raise VerificationError("value ID must be a non-negative integer")
-    _verify_value_type(value.type)
+    _check_value_type(value.type)
 
 
-def verify_function_signature(function: Function) -> None:
+def check_function_signature(function: Function) -> None:
     """Check function metadata and signature, allowing an unfinished body."""
-    _verify_name(function.name, "function name")
+    _check_name(function.name, "function name")
     if not isinstance(function.type, FunctionType):
         raise VerificationError("function signature must be a FunctionType")
-    verify_type(function.type)
+    check_type(function.type)
     for kind, names, types in (
         ("input", function.input_names, function.type.inputs),
         ("output", function.output_names, function.type.outputs),
@@ -141,30 +141,30 @@ def verify_function_signature(function: Function) -> None:
             raise VerificationError(f"{kind} names must match {kind} arity")
         for name in names:
             if name is not None:
-                _verify_name(name, f"{kind} name")
-    _verify_attributes(function.attributes)
+                _check_name(name, f"{kind} name")
+    _check_attributes(function.attributes)
 
 
-def verify_global(global_: Global) -> None:
+def check_global(global_: Global) -> None:
     """Check a global's name, type, initializer, and attributes."""
-    _verify_name(global_.name, "global name")
-    _verify_value_type(global_.type)
-    _verify_literal(global_.initializer, global_.type)
-    _verify_attributes(global_.attributes)
+    _check_name(global_.name, "global name")
+    _check_value_type(global_.type)
+    _check_literal(global_.initializer, global_.type)
+    _check_attributes(global_.attributes)
 
 
-def verify_symbol_available(module: Module, name: SymbolName) -> None:
+def check_symbol_available(module: Module, name: SymbolName) -> None:
     """Check a new declaration's name before inserting it into a module."""
-    _verify_name(name, "symbol name")
+    _check_name(name, "symbol name")
     if any(symbol.name == name for symbol in (*module.globals, *module.functions)):
         raise VerificationError("module symbol names must be unique")
 
 
-def verify_block_arguments(block: Block, owner: Function | If) -> None:
+def check_block_arguments(block: Block, owner: Function | If) -> None:
     """Check entry arguments for a function or an argument-free If branch."""
     ids: set[ValueId] = set()
     for argument in block.arguments:
-        verify_value(argument)
+        check_value(argument)
         if argument.id in ids:
             raise VerificationError(f"value %{argument.id} is defined more than once")
         ids.add(argument.id)
@@ -173,7 +173,7 @@ def verify_block_arguments(block: Block, owner: Function | If) -> None:
         raise VerificationError("block argument types must match region input types")
 
 
-def verify_op(op: Op) -> None:
+def check_op(op: Op) -> None:
     """Check an operation's values, attributes, and type constraints.
 
     This local check allows unfinished nested regions. It does not resolve
@@ -181,16 +181,16 @@ def verify_op(op: Op) -> None:
     [`verify`][niro.ir.verify.verify] to check a complete module.
     """
     for value in (*op.get_operands(), *op.get_results()):
-        verify_value(value)
+        check_value(value)
     result_ids = [value.id for value in op.get_results()]
     if len(result_ids) != len(set(result_ids)):
         raise VerificationError("operation must produce unique value IDs")
 
     match op:
         case Const():
-            _verify_literal(op.literal, op.result.type)
+            _check_literal(op.literal, op.result.type)
         case GetGlobal(name=name):
-            _verify_name(name, "global name")
+            _check_name(name, "global name")
         case Transpose():
             if op.result.type != transpose_result_type(op.operand.type, op.permutation):
                 raise VerificationError(
@@ -202,30 +202,30 @@ def verify_op(op: Op) -> None:
                 raise VerificationError(
                     f"{operation} operands and result must have the same type"
                 )
-            _verify_numeric(op.lhs.type, operation)
+            _check_numeric(op.lhs.type, operation)
         case MatMul():
             if op.result.type != matmul_result_type(op.lhs.type, op.rhs.type):
                 raise VerificationError(
                     "matmul result type does not match its operands"
                 )
         case Call(callee=callee):
-            _verify_name(callee, "callee name")
+            _check_name(callee, "callee name")
         case Return() | Yield():
             pass
         case If(condition=condition):
             if condition.type is not ScalarType.BOOL:
                 raise VerificationError("if condition must be boolean")
         case UnknownOp(name=name, attributes=attributes):
-            _verify_name(name, "UnknownOp name")
-            _verify_attributes(attributes)
+            _check_name(name, "UnknownOp name")
+            _check_attributes(attributes)
         case _ as unreachable:
             assert_never(unreachable)
 
 
-def verify_call(op: Call, callee: Function) -> None:
+def check_call_signature(op: Call, callee: Function) -> None:
     """Check a call's local invariants and signature against its resolved callee."""
-    verify_op(op)
-    verify_function_signature(callee)
+    check_op(op)
+    check_function_signature(callee)
     if op.callee != callee.name:
         raise VerificationError("call target must match callee name")
     if tuple(argument.type for argument in op.arguments) != callee.type.inputs:
@@ -238,9 +238,9 @@ def verify_call(op: Call, callee: Function) -> None:
         )
 
 
-def verify_terminator(op: Return | Yield, owner: Function | If) -> None:
+def check_terminator(op: Return | Yield, owner: Function | If) -> None:
     """Check a terminator and its operands against the enclosing function or If."""
-    verify_op(op)
+    check_op(op)
     if isinstance(owner, Function):
         expected = Return
         outputs = owner.type.outputs
@@ -259,7 +259,7 @@ def transpose_result_type(
     operand_type: Type, permutation: tuple[int, ...]
 ) -> TensorType:
     """Check a transpose's inputs and derive its result type."""
-    _verify_value_type(operand_type)
+    _check_value_type(operand_type)
     if not isinstance(operand_type, TensorType):
         raise VerificationError("transpose operand must be a tensor")
     rank = len(permutation) if operand_type.shape is None else len(operand_type.shape)
@@ -279,15 +279,15 @@ def transpose_result_type(
 
 def matmul_result_type(lhs: Type, rhs: Type) -> TensorType:
     """Check numeric rank-two matrix inputs and derive the result type."""
-    _verify_value_type(lhs)
-    _verify_value_type(rhs)
+    _check_value_type(lhs)
+    _check_value_type(rhs)
     if not isinstance(lhs, TensorType) or not isinstance(rhs, TensorType):
         raise VerificationError("matmul operands must be tensors")
     if lhs.rank != 2 or rhs.rank != 2:
         raise VerificationError("matmul operands must be rank-two tensors")
     if lhs.element_type is not rhs.element_type:
         raise VerificationError("matmul operand element types must match")
-    _verify_numeric(lhs, "matmul")
+    _check_numeric(lhs, "matmul")
     assert lhs.shape is not None and rhs.shape is not None
     lhs_inner, rhs_inner = lhs.shape[1], rhs.shape[0]
     if lhs_inner is not None and rhs_inner is not None and lhs_inner != rhs_inner:
@@ -295,7 +295,7 @@ def matmul_result_type(lhs: Type, rhs: Type) -> TensorType:
     return TensorType(lhs.element_type, (lhs.shape[0], rhs.shape[1]))
 
 
-def _verify_numeric(value_type: Type, operation: str) -> None:
+def _check_numeric(value_type: Type, operation: str) -> None:
     element_type = (
         value_type.element_type if isinstance(value_type, TensorType) else value_type
     )
@@ -303,7 +303,7 @@ def _verify_numeric(value_type: Type, operation: str) -> None:
         raise VerificationError(f"{operation} does not support boolean values")
 
 
-def _verify_literal(literal: Literal, value_type: Type) -> None:
+def _check_literal(literal: Literal, value_type: Type) -> None:
     match value_type:
         case ScalarType.BOOL if type(literal) is bool:
             return
@@ -342,24 +342,24 @@ def _verify_literal(literal: Literal, value_type: Type) -> None:
     raise VerificationError("literal does not match its type")
 
 
-def _verify_name(name: str, kind: str) -> None:
+def _check_name(name: str, kind: str) -> None:
     if not isinstance(name, str) or not name:
         raise VerificationError(f"{kind} must be a non-empty string")
 
 
-def _verify_attributes(attributes: Attributes) -> None:
+def _check_attributes(attributes: Attributes) -> None:
     for name, value in attributes.items():
-        _verify_name(name, "attribute name")
+        _check_name(name, "attribute name")
         with _at(f"attribute {name!r}"):
-            _verify_attribute_value(value)
+            _check_attribute_value(value)
 
 
-def _verify_attribute_value(value: AttributeValue) -> None:
+def _check_attribute_value(value: AttributeValue) -> None:
     if value is None or isinstance(value, (bool, int, float, str, bytes)):
         return
     if isinstance(value, tuple):
         for item in value:
-            _verify_attribute_value(item)
+            _check_attribute_value(item)
         return
     raise VerificationError(
         "attribute value must be a primitive or tuple of attributes"
@@ -382,7 +382,7 @@ class _Verifier:
         self.blocks: set[int] = set()
 
     def function(self, function: Function) -> None:
-        verify_function_signature(function)
+        check_function_signature(function)
         self.defined.clear()
         if function.body is not None:
             self.region(function.body, {}, function)
@@ -403,14 +403,14 @@ class _Verifier:
             raise VerificationError("block has multiple owners")
         self.blocks.add(id(block))
 
-        verify_block_arguments(block, owner)
+        check_block_arguments(block, owner)
         visible = dict(visible)
         for argument in block.arguments:
             self.define(argument, visible)
 
         for index, op in enumerate(block.operations):
             with _at(f"operation {index} ({type(op).__name__})"):
-                verify_op(op)
+                check_op(op)
                 for operand in op.get_operands():
                     if operand.id not in visible:
                         raise VerificationError(f"value %{operand.id} is not visible")
@@ -422,7 +422,7 @@ class _Verifier:
                 if isinstance(op, (Return, Yield)):
                     if index != len(block.operations) - 1:
                         raise VerificationError("terminator must be the last operation")
-                    verify_terminator(op, owner)
+                    check_terminator(op, owner)
 
                 self.operation(op, visible)
                 for result in op.get_results():
@@ -440,7 +440,7 @@ class _Verifier:
                     raise VerificationError(
                         f"call target {op.callee!r} must name a function"
                     )
-                verify_call(op, callee)
+                check_call_signature(op, callee)
             case GetGlobal():
                 global_ = self.symbols.get(op.name)
                 if not isinstance(global_, Global):

@@ -464,28 +464,34 @@ support.
 
 IR dataclasses store data without validation. All IR validity rules live in
 `src/niro/ir/verify.py`, and its public functions are re-exported in `niro.ir`.
-Builders call local verifiers before inserting declarations, blocks, and
-operations. They retain guards for construction steps, such as adding a second
-function body or appending after a terminator.
+Builders call the local `check_*` functions before inserting declarations,
+blocks, and operations. They retain guards for construction steps, such as
+adding a second function body or appending after a terminator.
 
-The local functions raise `VerificationError` and return `None` on success:
+Each `check_*` function checks only the rules named below, using the information
+passed to it. It raises `VerificationError` on failure and returns `None` on
+success:
 
 | Function | What it checks |
 | --- | --- |
-| `verify_type(value_type)` | A scalar, tensor, or function type |
-| `verify_value(value)` | A value's non-negative ID and scalar or tensor type |
-| `verify_function_signature(function)` | Name, signature, interface names, and attributes, allowing an unfinished body |
-| `verify_global(global_)` | Name, type, initializer, and attributes |
-| `verify_op(op)` | Values, attributes, and operation type constraints, allowing unfinished nested regions |
-| `verify_call(op, callee)` | A call and its resolved function signature |
-| `verify_block_arguments(block, owner)` | Function inputs or an argument-free `If` branch |
-| `verify_terminator(op, owner)` | `Return` for a function or `Yield` for an `If`, with matching output types |
-| `verify_symbol_available(module, name)` | Availability of a name for a new declaration |
+| `check_type(value_type)` | A scalar, tensor, or function type |
+| `check_value(value)` | A value's non-negative ID and scalar or tensor type |
+| `check_function_signature(function)` | Name, signature, interface names, and attributes, allowing an unfinished body |
+| `check_global(global_)` | Name, type, initializer, and attributes |
+| `check_op(op)` | Values, attributes, and operation type constraints, allowing unfinished nested regions |
+| `check_call_signature(op, callee)` | A call and its resolved function signature |
+| `check_block_arguments(block, owner)` | Function inputs or an argument-free `If` branch |
+| `check_terminator(op, owner)` | `Return` for a function or `Yield` for an `If`, with matching output types |
+| `check_symbol_available(module, name)` | Availability of a name for a new declaration |
 
-The `owner` argument is a `Function` or `If`. These explicit names distinguish
-local checks from complete verification; there are no overloads of `verify`.
-Local checks do not establish SSA scope, symbol resolution, or completeness of
+The `owner` argument is a `Function` or `If`. Local checks accept only the context
+needed for their rule, such as a resolved callee or the enclosing region owner.
+Passing a module to every check would not supply the position of an object that
+has not yet been inserted into it.
+
+The name `verify` is reserved for complete module verification. A successful
+local check does not establish SSA scope, symbol resolution, or completeness of
 the whole program. Call `verify(module)` after building or transforming it.
 
 `matmul_result_type` and `transpose_result_type` also live in `verify.py`. They
-check operands and derive a result type using the same rules as `verify_op`.
+check operands and derive a result type using the same rules as `check_op`.

@@ -96,7 +96,7 @@ def test_accepts_empty_modules_and_recursive_calls() -> None:
 )
 def test_checks_types_explicitly(value_type: ir.Type | ir.FunctionType) -> None:
     with pytest.raises(ir.VerificationError, match="non-negative integer"):
-        ir.verify_type(value_type)
+        ir.check_type(value_type)
 
 
 @pytest.mark.parametrize(
@@ -104,7 +104,7 @@ def test_checks_types_explicitly(value_type: ir.Type | ir.FunctionType) -> None:
 )
 def test_checks_value_ids_and_types(bad: ir.Value) -> None:
     with pytest.raises(ir.VerificationError, match="non-negative integer"):
-        ir.verify_value(bad)
+        ir.check_value(bad)
 
 
 @pytest.mark.parametrize(
@@ -123,7 +123,7 @@ def test_checks_value_ids_and_types(bad: ir.Value) -> None:
     ],
 )
 def test_literal_boundaries(type: ir.Type, literal: ir.Literal) -> None:
-    ir.verify_op(ir.Const(value(0, type), literal))
+    ir.check_op(ir.Const(value(0, type), literal))
     ir.verify(ir.Module(globals=[ir.Global("constant", type, literal)]))
 
 
@@ -147,9 +147,9 @@ def test_rejects_invalid_literals(
     constant = ir.Const(value(0, type), literal)
     global_ = ir.Global("constant", type, literal)
     with pytest.raises(ir.VerificationError, match=error):
-        ir.verify_op(constant)
+        ir.check_op(constant)
     with pytest.raises(ir.VerificationError, match=error):
-        ir.verify_global(global_)
+        ir.check_global(global_)
 
 
 @pytest.mark.parametrize("operation", [ir.Add, ir.Mul, ir.MatMul])
@@ -159,7 +159,7 @@ def test_rejects_boolean_arithmetic(
     tensor = ir.TensorType(ir.ScalarType.BOOL, (2, 2))
     op = operation(value(2, tensor), value(0, tensor), value(1, tensor))
     with pytest.raises(ir.VerificationError, match="does not support boolean"):
-        ir.verify_op(op)
+        ir.check_op(op)
 
 
 def test_checks_arithmetic_shapes_and_inference() -> None:
@@ -167,13 +167,13 @@ def test_checks_arithmetic_shapes_and_inference() -> None:
     rhs = value(1, ir.TensorType(ir.ScalarType.F32, (3, 4)))
     expected = ir.TensorType(ir.ScalarType.F32, (2, 4))
     assert ir.matmul_result_type(lhs.type, rhs.type) == expected
-    ir.verify_op(ir.MatMul(value(2, expected), lhs, rhs))
+    ir.check_op(ir.MatMul(value(2, expected), lhs, rhs))
     with pytest.raises(ir.VerificationError, match="result type"):
-        ir.verify_op(ir.MatMul(value(2, lhs.type), lhs, rhs))
+        ir.check_op(ir.MatMul(value(2, lhs.type), lhs, rhs))
     with pytest.raises(ir.VerificationError, match="contracting dimensions"):
         ir.matmul_result_type(rhs.type, lhs.type)
     with pytest.raises(ir.VerificationError, match="same type"):
-        ir.verify_op(ir.Add(value(2, lhs.type), lhs, rhs))
+        ir.check_op(ir.Add(value(2, lhs.type), lhs, rhs))
     assert ir.matmul_result_type(
         ir.TensorType(ir.ScalarType.F32, (None, 3)), rhs.type
     ) == ir.TensorType(ir.ScalarType.F32, (None, 4))
@@ -212,7 +212,7 @@ def test_checks_transpose_permutation_even_with_unknown_rank(
 )
 def test_checks_function_declarations(function: ir.Function, error: str) -> None:
     with pytest.raises(ir.VerificationError, match=error):
-        ir.verify_function_signature(function)
+        ir.check_function_signature(function)
     with pytest.raises(ir.VerificationError, match=error):
         ir.verify(ir.Module(functions=[function]))
 
@@ -390,7 +390,7 @@ def test_checks_unknown_operation_attributes() -> None:
     operation = ir.UnknownOp(
         "custom.op", (), (), {"nested": (1, "value", (None, True))}
     )
-    ir.verify_op(operation)
+    ir.check_op(operation)
     operation.attributes["nested"] = cast(ir.AttributeValue, [1])
     with pytest.raises(ir.VerificationError, match="attribute 'nested'"):
         ir.verify(module_with([operation, ir.Return()]))
@@ -398,6 +398,6 @@ def test_checks_unknown_operation_attributes() -> None:
 
 def test_local_checks_allow_unfinished_regions_but_module_check_rejects_them() -> None:
     conditional = ir.If((), value(0, ir.ScalarType.BOOL), ir.Region(), ir.Region())
-    ir.verify_op(conditional)
+    ir.check_op(conditional)
     with pytest.raises(ir.VerificationError, match="exactly one block"):
         ir.verify(module_with([conditional, ir.Return()], (conditional.condition,)))
