@@ -10,9 +10,20 @@ import builtins
 from collections.abc import Callable, Mapping, Sequence
 
 from niro import ir
+from niro.ir import SymbolName
 
 type CallTarget = FunctionBuilder | ir.Function | ir.SymbolName
 type GlobalTarget = ir.Global | ir.SymbolName
+
+
+class Builder[T]:
+    """Base class for builders of a single IR object.
+
+    Attributes:
+        inner: The IR object under construction.
+    """
+
+    inner: T
 
 
 class Ctx:
@@ -28,7 +39,7 @@ class Ctx:
 
     def resolve_function(self, target: CallTarget) -> ir.Function:
         name = (
-            target.ir.name
+            target.inner.name
             if isinstance(target, FunctionBuilder)
             else (target.name if isinstance(target, ir.Function) else target)
         )
@@ -45,20 +56,17 @@ class Ctx:
         raise ValueError(f"unknown global: {name!r}")
 
 
-class ModuleBuilder:
-    """Builder for [`niro.ir.Module`][].
-
-    Attributes:
-        ir: The [`niro.ir.Module`][] under construction.
-    """
+class ModuleBuilder(Builder[ir.Module]):
+    """Builder for [`niro.ir.Module`][]."""
 
     def __init__(self) -> None:
-        self.ir: ir.Module = ir.Module()
+        self.inner: ir.Module = ir.Module()
+        """The [`niro.ir.Module`][] under construction."""
 
     def function(
         self,
         *,
-        name: ir.SymbolName,
+        name: SymbolName,
         type: ir.FunctionType,
         input_names: Sequence[str | None] | None = None,
         output_names: Sequence[str | None] | None = None,
@@ -73,8 +81,8 @@ class ModuleBuilder:
             output_names=None if output_names is None else tuple(output_names),
             attributes=dict(attributes or {}),
         )
-        self.ir.functions.append(fn)
-        return FunctionBuilder(Ctx(self.ir, fn), fn)
+        self.inner.functions.append(fn)
+        return FunctionBuilder(Ctx(self.inner, fn), fn)
 
     def global_(
         self, name: ir.SymbolName, type: ir.Type, initializer: ir.Literal
@@ -82,20 +90,20 @@ class ModuleBuilder:
         """Declare and return an initialized global."""
         self._require_available_symbol(name)
         global_ = ir.Global(name, type, initializer)
-        self.ir.globals.append(global_)
+        self.inner.globals.append(global_)
         return global_
 
     def _require_available_symbol(self, name: ir.SymbolName) -> None:
-        names = {item.name for item in [*self.ir.globals, *self.ir.functions]}
+        names = {item.name for item in [*self.inner.globals, *self.inner.functions]}
         if name in names:
             raise ValueError("module symbol names must be unique")
 
 
-class FunctionBuilder:
+class FunctionBuilder(Builder[ir.Function]):
     """Builder for [`niro.ir.Function`][].
 
     Attributes:
-        ir: The [`niro.ir.Function`][] under construction.
+        inner: The [`niro.ir.Function`][] under construction.
     """
 
     def __init__(
@@ -104,38 +112,38 @@ class FunctionBuilder:
         function: ir.Function,
     ) -> None:
         self._ctx = ctx
-        self.ir: ir.Function = function
+        self.inner: ir.Function = function
 
     def region(self) -> RegionBuilder:
         """Create and return the function body region."""
-        if self.ir.body:
+        if self.inner.body:
             raise ValueError("function already has a body")
         body = ir.Region()
-        self.ir.body = body
+        self.inner.body = body
         return RegionBuilder(self._ctx, body)
 
 
-class RegionBuilder:
+class RegionBuilder(Builder[ir.Region]):
     """Builder for [`niro.ir.Region`][].
 
     Attributes:
-        ir: The [`niro.ir.Region`][] under construction.
+        inner: The [`niro.ir.Region`][] under construction.
     """
 
     def __init__(self, ctx: Ctx, region: ir.Region) -> None:
         self._ctx = ctx
-        self.ir: ir.Region = region
+        self.inner: ir.Region = region
 
     def first_block(self) -> BlockBuilder:
         """Append the first block, deriving function input arguments."""
-        if self.ir.blocks:
+        if self.inner.blocks:
             raise ValueError("region already has a first block")
         arg_types = self._function_input_types if self._is_function_body else ()
         return self.block(arg_types)
 
     def block(self, arg_types: Sequence[ir.Type] = ()) -> BlockBuilder:
         """Append a block with arguments of the given types."""
-        if self.ir.blocks:
+        if self.inner.blocks:
             raise ValueError("multiple blocks per region are not supported")
         if self._is_function_body and tuple(arg_types) != self._function_input_types:
             raise TypeError(
@@ -144,23 +152,23 @@ class RegionBuilder:
         args = tuple(self._ctx.new_value(type) for type in arg_types)
         block = ir.Block(arguments=args)
         builder = BlockBuilder(self._ctx, block)
-        self.ir.blocks.append(block)
+        self.inner.blocks.append(block)
         return builder
 
     @property
     def _is_function_body(self) -> bool:
-        return self.ir is self._ctx.function.body
+        return self.inner is self._ctx.function.body
 
     @property
     def _function_input_types(self) -> tuple[ir.Type, ...]:
         return self._ctx.function.type.inputs
 
 
-class BlockBuilder:
+class BlockBuilder(Builder[ir.Block]):
     """Builder for [`niro.ir.Block`][].
 
     Attributes:
-        ir: The [`niro.ir.Block`][] under construction.
+        inner: The [`niro.ir.Block`][] under construction.
     """
 
     def __init__(
@@ -169,18 +177,18 @@ class BlockBuilder:
         block: ir.Block,
     ) -> None:
         self._ctx = ctx
-        self.ir: ir.Block = block
+        self.inner: ir.Block = block
 
     def _append_operation[Op: ir.Op](
         self,
         result_types: Sequence[ir.Type],
         create_op: Callable[[tuple[ir.Value, ...]], Op],
     ) -> Op:
-        if self.ir.operations and self.ir.operations[-1].is_terminator():
+        if self.inner.operations and self.inner.operations[-1].is_terminator():
             raise ValueError("cannot append an operation after a block terminator")
         results = tuple(self._ctx.new_value(type) for type in result_types)
         op = create_op(results)
-        self.ir.operations.append(op)
+        self.inner.operations.append(op)
         return op
 
     def const(self, literal: ir.Literal, type: ir.Type) -> ir.Value:
@@ -313,8 +321,8 @@ class BlockBuilder:
             return ir.If(
                 results=results,
                 condition=condition,
-                then_region=then_region.ir,
-                else_region=else_region.ir,
+                then_region=then_region.inner,
+                else_region=else_region.inner,
             )
 
         op = self._append_operation(result_types, create)
@@ -363,11 +371,11 @@ class BlockBuilder:
         self._append_operation([], create)
 
 
-class IfBuilder:
+class IfBuilder(Builder[ir.If]):
     """Builder for the regions of [`niro.ir.If`][].
 
     Attributes:
-        ir: The [`niro.ir.If`][] under construction.
+        inner: The [`niro.ir.If`][] under construction.
         then_region: The [`niro.builder.RegionBuilder`][] for the taken branch.
         else_region: The [`niro.builder.RegionBuilder`][] for the other branch.
     """
@@ -378,6 +386,6 @@ class IfBuilder:
         then_region: RegionBuilder,
         else_region: RegionBuilder,
     ) -> None:
-        self.ir: ir.If = if_
+        self.inner: ir.If = if_
         self.then_region: RegionBuilder = then_region
         self.else_region: RegionBuilder = else_region

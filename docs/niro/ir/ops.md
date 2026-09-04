@@ -1,7 +1,7 @@
 ::: niro.ir.ops
     options:
       filters:
-        - "!^_"
+        - "!^_"      
       heading_level: 1
       show_bases: false
       show_if_no_docstring: true

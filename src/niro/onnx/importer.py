@@ -26,7 +26,7 @@ class Ctx:
 
 
 def import_onnx(onnx_model: onnx.ModelProto) -> ir.Module:
-    """Import ONNX module to Niro IR"""
+    """Import ONNX model as Niro IR"""
     graph = onnx_model.graph
     module = ModuleBuilder()
     weights = _import_initializers(graph, module)
@@ -36,7 +36,7 @@ def import_onnx(onnx_model: onnx.ModelProto) -> ir.Module:
         types=_collect_types(graph),
     )
     _import_forward(ctx, module)
-    return module.ir
+    return module.inner
 
 
 def node_name(node: onnx.NodeProto) -> str:
@@ -47,8 +47,8 @@ def node_name(node: onnx.NodeProto) -> str:
 
 def _import_forward(ctx: Ctx, module: ModuleBuilder) -> ir.Function:
     fn = _declare_entry_point(ctx.graph, module)
-    input_names = fn.ir.input_names
-    output_names = fn.ir.output_names
+    input_names = fn.inner.input_names
+    output_names = fn.inner.output_names
     assert input_names is not None
     assert all(input_names)
     assert output_names is not None
@@ -58,7 +58,7 @@ def _import_forward(ctx: Ctx, module: ModuleBuilder) -> ir.Function:
     value_table = OnnxValueTable()
     value_table.define_many(
         (cast(str, name) for name in input_names),
-        block.ir.arguments,
+        block.inner.arguments,
     )
     for node in ctx.graph.node:
         operands = []
@@ -81,11 +81,11 @@ def _import_forward(ctx: Ctx, module: ModuleBuilder) -> ir.Function:
         value_table.define_many(node.output, results)
 
     outputs = [value_table.lookup(cast(str, name)) for name in output_names]
-    for output, ty in zip(outputs, fn.ir.type.outputs, strict=True):
+    for output, ty in zip(outputs, fn.inner.type.outputs, strict=True):
         assert output.type == ty
 
     block.return_(*outputs)
-    return fn.ir
+    return fn.inner
 
 
 def _declare_entry_point(
@@ -170,13 +170,11 @@ def _import_initializers(
     graph: onnx.GraphProto,
     module: ModuleBuilder,
 ) -> dict[OnnxValueName, ir.Global]:
+    sym_table: dict[OnnxValueName, ir.Global] = {}
     for t in graph.initializer:
         ty = _tensor_type(t)
         val = _tensor_data(t)
-        module.global_(t.name, ty, val)
-    globals = module.ir.globals
-    assert len(globals) >= len(graph.initializer)
-    sym_table = {global_.name: global_ for global_ in globals}
+        sym_table[t.name] = module.global_(t.name, ty, val)
     return sym_table
 
 
