@@ -77,7 +77,7 @@ def _emit_operations(
     values: ValueTable,
     generated_globals: list[Operation],
     function_name: str,
-    operations: list[ir.Op],
+    operations: list[ir.Operation],
 ) -> None:
     for operation in operations:
         _emit_operation(
@@ -85,7 +85,7 @@ def _emit_operations(
             values,
             generated_globals,
             function_name,
-            operation,
+            ir.as_op(operation),
         )
 
 

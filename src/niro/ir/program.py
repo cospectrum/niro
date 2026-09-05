@@ -5,10 +5,13 @@ Re-exported in [`niro.ir`][].
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import field
+
+from pydantic import InstanceOf
+from pydantic.dataclasses import dataclass
 
 from niro.ir.data import Attributes, Literal
-from niro.ir.ops import Op
+from niro.ir.operation import Operation
 from niro.ir.types import Type
 from niro.ir.values import Value
 
@@ -18,7 +21,7 @@ type SymbolName = str
 @dataclass(slots=True)
 class Block:
     arguments: tuple[Value, ...] = ()
-    operations: list[Op] = field(default_factory=list)
+    operations: list[InstanceOf[Operation]] = field(default_factory=list)
 
 
 @dataclass(slots=True)

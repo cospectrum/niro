@@ -14,6 +14,7 @@ nav:
           - builder: niro/builder.md
           - ir:
               - niro/ir/index.md
+              - operation: niro/ir/operation.md
               - types: niro/ir/types.md
               - values: niro/ir/values.md
               - program: niro/ir/program.md

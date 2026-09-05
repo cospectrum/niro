@@ -6,16 +6,16 @@ Re-exported in [`niro.ir`][].
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, assert_never, cast
+from dataclasses import field
+from typing import assert_never, cast
+
+from pydantic.dataclasses import dataclass
 
 from niro.ir.data import Attributes, Literal
+from niro.ir.operation import Operation
+from niro.ir.program import Region, SymbolName
 from niro.ir.types import ScalarType, TensorType, Type
 from niro.ir.values import Value
-
-if TYPE_CHECKING:
-    from niro.ir.program import Region, SymbolName
-
 
 type Op = (
     Const
@@ -30,84 +30,83 @@ type Op = (
     | If
     | UnknownOp
 )
+"""Closed union of the operation variants understood by Niro."""
 
 
 @dataclass(frozen=True, slots=True)
-class _BaseOp:
+class _BuiltinOperation(Operation):
     def get_operands(self) -> tuple[Value, ...]:
-        """Return the SSA values consumed by this operation."""
-        return _get_operands(cast(Op, self))
+        return _get_operands(cast("Op", self))
 
     def get_results(self) -> tuple[Value, ...]:
-        """Return the SSA values produced by this operation."""
-        return _get_results(cast(Op, self))
+        return _get_results(cast("Op", self))
 
     def is_terminator(self) -> bool:
-        return _is_terminator(cast(Op, self))
+        return _is_terminator(cast("Op", self))
 
     def __post_init__(self) -> None:
-        _validate_op(cast(Op, self))
+        _validate_op(cast("Op", self))
 
 
 @dataclass(frozen=True, slots=True)
-class Const(_BaseOp):
+class Const(_BuiltinOperation):
     result: Value
     literal: Literal
 
 
 @dataclass(frozen=True, slots=True)
-class GetGlobal(_BaseOp):
+class GetGlobal(_BuiltinOperation):
     name: SymbolName
     result: Value
 
 
 @dataclass(frozen=True, slots=True)
-class Transpose(_BaseOp):
+class Transpose(_BuiltinOperation):
     result: Value
     operand: Value
     permutation: tuple[int, ...]
 
 
 @dataclass(frozen=True, slots=True)
-class Add(_BaseOp):
+class Add(_BuiltinOperation):
     result: Value
     lhs: Value
     rhs: Value
 
 
 @dataclass(frozen=True, slots=True)
-class Mul(_BaseOp):
+class Mul(_BuiltinOperation):
     result: Value
     lhs: Value
     rhs: Value
 
 
 @dataclass(frozen=True, slots=True)
-class MatMul(_BaseOp):
+class MatMul(_BuiltinOperation):
     result: Value
     lhs: Value
     rhs: Value
 
 
 @dataclass(frozen=True, slots=True)
-class Call(_BaseOp):
+class Call(_BuiltinOperation):
     callee: SymbolName
     arguments: tuple[Value, ...]
     results: tuple[Value, ...]
 
 
 @dataclass(frozen=True, slots=True)
-class Return(_BaseOp):
+class Return(_BuiltinOperation):
     operands: tuple[Value, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
-class Yield(_BaseOp):
+class Yield(_BuiltinOperation):
     operands: tuple[Value, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
-class If(_BaseOp):
+class If(_BuiltinOperation):
     results: tuple[Value, ...]
     condition: Value
     then_region: Region
@@ -115,13 +114,20 @@ class If(_BaseOp):
 
 
 @dataclass(frozen=True, slots=True)
-class UnknownOp(_BaseOp):
+class UnknownOp(_BuiltinOperation):
     """A structurally valid operation whose semantics are unknown to niro."""
 
     name: str
     operands: tuple[Value, ...]
     results: tuple[Value, ...]
     attributes: Attributes = field(default_factory=dict)
+
+
+def as_op(operation: Operation) -> Op:
+    """Return a built-in operation, rejecting extension operations."""
+    if not isinstance(operation, Op.__value__):
+        raise TypeError(f"{type(operation).__name__} is not a built-in Niro operation")
+    return cast("Op", operation)
 
 
 def _get_operands(op: Op) -> tuple[Value, ...]:

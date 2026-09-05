@@ -6,7 +6,9 @@ Re-exported in [`niro.ir`][].
 from __future__ import annotations
 
 import enum
-from dataclasses import dataclass
+
+from pydantic import NonNegativeInt
+from pydantic.dataclasses import dataclass
 
 
 class ScalarType(enum.Enum):
@@ -27,7 +29,7 @@ class ScalarType(enum.Enum):
         }[self]
 
 
-type Dimension = int | None
+type Dimension = NonNegativeInt | None
 type Shape = tuple[Dimension, ...]
 
 
@@ -42,15 +44,6 @@ class TensorType:
         if self.shape is None:
             return None
         return len(self.shape)
-
-    def __post_init__(self) -> None:
-        if self.shape is None:
-            return
-        for dim in self.shape:
-            if dim is None:
-                continue
-            if dim < 0:
-                raise ValueError("tensor dimension cannot be negative")
 
 
 type Type = ScalarType | TensorType
