@@ -18,10 +18,12 @@ from niro import ir
 type ValueTable = dict[ir.ValueId, SSAValue]
 
 
-def export_mlir(module: ir.Module) -> builtin.ModuleOp:
+def export_mlir(niro_module: ir.Module) -> builtin.ModuleOp:
     """Export a Niro module as a verified, high-level MLIR module."""
-    lowered_functions = [_lower_function(function) for function in module.functions]
-    declared_globals = [_lower_global(global_) for global_ in module.globals]
+    lowered_functions = [
+        _lower_function(function) for function in niro_module.functions
+    ]
+    declared_globals = [_lower_global(global_) for global_ in niro_module.globals]
     generated_globals = [
         global_operation
         for function_globals, _ in lowered_functions
@@ -30,7 +32,7 @@ def export_mlir(module: ir.Module) -> builtin.ModuleOp:
     functions = [function for _, function in lowered_functions]
     result = builtin.ModuleOp(
         [*declared_globals, *generated_globals, *functions],
-        attributes=_lower_attributes(module.attributes),
+        attributes=_lower_attributes(niro_module.attributes),
     )
     result.verify()
     return result

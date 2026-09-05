@@ -20,6 +20,9 @@ niro = "niro.cli:app"
 requires = ["uv_build>=0.12.2,<0.13.0"]
 build-backend = "uv_build"
 
+[tool.uv.build-backend]
+data = { scripts = "scripts/bin" }
+
 [dependency-groups]
 dev = [
     "coverage>=7.15.4",

@@ -1,13 +1,12 @@
 # niro
 
 [![GitHub](https://img.shields.io/badge/GitHub-cospectrum%2Fniro-4C1D95?logo=github)](https://github.com/cospectrum/niro)
-[![Docs](https://img.shields.io/badge/docs-cospectrum.github.io%2Fniro-4C1D95)](https://cospectrum.github.io/niro/)
 [![CI](https://github.com/cospectrum/niro/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/cospectrum/niro/actions/workflows/ci.yml?query=branch%3Amain)
 [![Coverage Status](https://coveralls.io/repos/github/cospectrum/niro/badge.svg?branch=main)](https://coveralls.io/github/cospectrum/niro?branch=main)
 
-Niro compiles computation graphs from [ONNX] (TensorFlow, PyTorch, and others
-planned) through one unified, strongly typed SSA IR. [MLIR] is the primary
-target; WebAssembly, [GIMPLE], and other backends may follow.
+Niro compiles computation graphs from [ONNX] (TensorFlow, PyTorch, [JAX][Jaxpr],
+and others planned) through one unified, strongly typed SSA IR. [MLIR] is the
+primary target; [GIMPLE], [QBE], and other backends may follow.
 
 **[Read the documentation](https://cospectrum.github.io/niro/)** ·
 [IR specification](https://cospectrum.github.io/niro/ir/) ·
@@ -49,5 +48,7 @@ niro inspect signature model.onnx
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 [GIMPLE]: https://gcc.gnu.org/onlinedocs/gccint/GIMPLE.html
+[Jaxpr]: https://docs.jax.dev/en/latest/jaxpr.html
 [MLIR]: https://mlir.llvm.org/
 [ONNX]: https://onnx.ai/onnx/
+[QBE]: https://c9x.me/compile/doc/il.html
