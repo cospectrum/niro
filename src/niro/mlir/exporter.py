@@ -20,7 +20,9 @@ type ValueTable = dict[ir.ValueId, SSAValue]
 
 def export_mlir(niro_module: ir.Module) -> builtin.ModuleOp:
     """Export a Niro module as a verified, high-level MLIR module."""
-    lowered_functions = [_lower_function(function) for function in niro_module.functions]
+    lowered_functions = [
+        _lower_function(function) for function in niro_module.functions
+    ]
     declared_globals = [_lower_global(global_) for global_ in niro_module.globals]
     generated_globals = [
         global_operation
