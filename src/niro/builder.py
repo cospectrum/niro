@@ -13,7 +13,7 @@ from niro import ir
 from niro.ir import SymbolName
 
 type CallTarget = FunctionBuilder | ir.Function | ir.SymbolName
-type GlobalTarget = ir.Global | ir.SymbolName
+GlobalTarget = ir.Global | ir.SymbolName
 
 
 class Builder[T]:

@@ -29,8 +29,8 @@ class ScalarType(enum.Enum):
         }[self]
 
 
-type Dimension = NonNegativeInt | None
-type Shape = tuple[Dimension, ...]
+Dimension = NonNegativeInt | None
+Shape = tuple[Dimension, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,4 +46,4 @@ class TensorType:
         return len(self.shape)
 
 
-type Type = ScalarType | TensorType
+Type = ScalarType | TensorType

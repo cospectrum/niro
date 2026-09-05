@@ -17,21 +17,6 @@ from niro.ir.program import Region, SymbolName
 from niro.ir.types import ScalarType, TensorType, Type
 from niro.ir.values import Value
 
-type Op = (
-    Const
-    | GetGlobal
-    | Transpose
-    | Add
-    | Mul
-    | MatMul
-    | Call
-    | Return
-    | Yield
-    | If
-    | UnknownOp
-)
-"""Closed union of the operation variants understood by Niro."""
-
 
 @dataclass(frozen=True, slots=True)
 class _BuiltinOperation(Operation):
@@ -123,11 +108,27 @@ class UnknownOp(_BuiltinOperation):
     attributes: Attributes = field(default_factory=dict)
 
 
+Op = (
+    Const
+    | GetGlobal
+    | Transpose
+    | Add
+    | Mul
+    | MatMul
+    | Call
+    | Return
+    | Yield
+    | If
+    | UnknownOp
+)
+"""Closed union of the operation variants understood by Niro."""
+
+
 def as_op(operation: Operation) -> Op:
     """Return a built-in operation, rejecting extension operations."""
-    if not isinstance(operation, Op.__value__):
+    if not isinstance(operation, Op):
         raise TypeError(f"{type(operation).__name__} is not a built-in Niro operation")
-    return cast("Op", operation)
+    return operation
 
 
 def _get_operands(op: Op) -> tuple[Value, ...]:

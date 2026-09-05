@@ -2,8 +2,8 @@ import pytest
 
 from niro import ir
 
-type Operands = tuple[ir.Value, ...]
-type Results = tuple[ir.Value, ...]
+Operands = tuple[ir.Value, ...]
+Results = tuple[ir.Value, ...]
 
 
 def test_operation_is_the_runtime_base_for_op_variants() -> None:

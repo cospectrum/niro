@@ -15,7 +15,7 @@ from niro.ir.operation import Operation
 from niro.ir.types import Type
 from niro.ir.values import Value
 
-type SymbolName = str
+SymbolName = str
 
 
 @dataclass(slots=True)

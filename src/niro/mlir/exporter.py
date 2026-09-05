@@ -15,7 +15,7 @@ from xdsl.ir import Attribute, Block, Operation, Region, SSAValue
 
 from niro import ir
 
-type ValueTable = dict[ir.ValueId, SSAValue]
+ValueTable = dict[ir.ValueId, SSAValue]
 
 
 def export_mlir(niro_module: ir.Module) -> builtin.ModuleOp:
