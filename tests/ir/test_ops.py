@@ -2,8 +2,32 @@ import pytest
 
 from niro import ir
 
-type Operands = tuple[ir.Value, ...]
-type Results = tuple[ir.Value, ...]
+Operands = tuple[ir.Value, ...]
+Results = tuple[ir.Value, ...]
+
+
+def test_operation_is_the_runtime_base_for_op_variants() -> None:
+    operation = ir.Return()
+
+    assert isinstance(operation, ir.Operation)
+    with pytest.raises(TypeError, match="abstract class"):
+        ir.Operation()
+
+
+def test_as_op_rejects_extension_operations() -> None:
+    class ExtensionOp(ir.Operation):
+        def get_operands(self) -> tuple[ir.Value, ...]:
+            return ()
+
+        def get_results(self) -> tuple[ir.Value, ...]:
+            return ()
+
+        def is_terminator(self) -> bool:
+            return False
+
+    assert ir.as_op(ir.Return()) == ir.Return()
+    with pytest.raises(TypeError, match="not a built-in Niro operation"):
+        ir.as_op(ExtensionOp())
 
 
 def test_operations_expose_generic_operands_and_results() -> None:

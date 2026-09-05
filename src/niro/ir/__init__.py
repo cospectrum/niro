@@ -3,6 +3,7 @@ values, program structure, operations, literals, and attributes.
 """
 
 from niro.ir.data import AttributeName, Attributes, AttributeValue, Literal
+from niro.ir.operation import Operation
 from niro.ir.ops import (
     Add,
     Call,
@@ -16,6 +17,7 @@ from niro.ir.ops import (
     Transpose,
     UnknownOp,
     Yield,
+    as_op,
     matmul_result_type,
     transpose_result_type,
 )
@@ -50,6 +52,7 @@ __all__ = [
     "Module",
     "Mul",
     "Op",
+    "Operation",
     "Region",
     "Return",
     "ScalarType",
@@ -62,6 +65,7 @@ __all__ = [
     "Value",
     "ValueId",
     "Yield",
+    "as_op",
     "matmul_result_type",
     "transpose_result_type",
 ]

@@ -5,12 +5,14 @@ Re-exported in [`niro.ir`][].
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import NewType
+
+from pydantic import NonNegativeInt
+from pydantic.dataclasses import dataclass
 
 from niro.ir.types import Type
 
-ValueId = NewType("ValueId", int)
+ValueId = NewType("ValueId", NonNegativeInt)
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,7 +21,3 @@ class Value:
 
     id: ValueId
     type: Type
-
-    def __post_init__(self) -> None:
-        if self.id < 0:
-            raise ValueError("value ID cannot be negative")

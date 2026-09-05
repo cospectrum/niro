@@ -2,7 +2,7 @@ from collections.abc import Iterable
 
 from niro import ir
 
-type OnnxValueName = str
+OnnxValueName = str
 
 
 class OnnxValueTable:
