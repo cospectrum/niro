@@ -1,8 +1,8 @@
 # Niro
 
-Niro compiles computation graphs from [ONNX] (TensorFlow, PyTorch, and others
-planned) through one unified, strongly typed SSA IR. [MLIR] is the primary
-target; WebAssembly, [GIMPLE], and other backends may follow.
+Niro compiles computation graphs from [ONNX] (TensorFlow, PyTorch, [JAX][Jaxpr],
+and others planned) through one unified, strongly typed SSA IR. [MLIR] is the
+primary target; [GIMPLE], [QBE], and other backends may follow.
 
 !!! warning "Work in progress"
 
@@ -38,10 +38,12 @@ niro inspect signature model.onnx
 ## Next steps
 
 - [IR specification](ir.md) — the types, values, and operations Niro compiles through.
-- [Python API](niro/index.md) — construct IR directly with [`niro.builder`](niro/builder.md).
+- [Python API](niro/index.md) — build, inspect, import, and export Niro programs programmatically.
 - [Contributing](https://github.com/cospectrum/niro/blob/main/CONTRIBUTING.md) — set up the
   development environment and run the checks.
 
 [GIMPLE]: https://gcc.gnu.org/onlinedocs/gccint/GIMPLE.html
+[Jaxpr]: https://docs.jax.dev/en/latest/jaxpr.html
 [MLIR]: https://mlir.llvm.org/
 [ONNX]: https://onnx.ai/onnx/
+[QBE]: https://c9x.me/compile/doc/il.html

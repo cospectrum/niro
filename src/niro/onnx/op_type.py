@@ -6,7 +6,18 @@ import enum
 class OnnxOpType(enum.StrEnum):
     """ONNX node operation types.
 
-    See https://onnx.ai/onnx/operators/index.html
+    See [onnx.ai/onnx/operators](https://onnx.ai/onnx/operators/index.html)
+    for a full list of operators.
+
+    ```python
+    class OnnxOpType(StrEnum):
+        Abs = "Abs"
+        Add = "Add"
+        MatMul = "MatMul"
+        Mul = "Mul"
+        Transpose = "Transpose"
+        ...
+    ```
     """
 
     Abs = "Abs"
