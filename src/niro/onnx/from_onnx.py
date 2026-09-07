@@ -25,8 +25,8 @@ class Ctx:
     types: Mapping[OnnxValueName, ir.Type]
 
 
-def import_onnx(onnx_model: onnx.ModelProto) -> ir.Module:
-    """Import ONNX model as Niro IR"""
+def from_onnx(onnx_model: onnx.ModelProto) -> ir.Module:
+    """Convert an ONNX model to Niro IR."""
     graph = onnx_model.graph
     module = ModuleBuilder()
     weights = _import_initializers(graph, module)

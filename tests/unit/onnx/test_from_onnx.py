@@ -8,8 +8,8 @@ import pytest
 from onnx import TensorProto, helper
 
 from niro import ir
-from niro.onnx import OnnxOpType, import_onnx
-from niro.onnx.importer import _ONNX_DOMAINS, node_name
+from niro.onnx import OnnxOpType, from_onnx
+from niro.onnx.from_onnx import _ONNX_DOMAINS, node_name
 
 
 def onnx_tensor(
@@ -138,7 +138,7 @@ def test_imports_single_node_graph(case: OneNodeCase) -> None:
         outputs=list(case.outputs),
     )
 
-    module = import_onnx(helper.make_model(graph=graph))
+    module = from_onnx(helper.make_model(graph=graph))
 
     function = module.functions[0]
     assert function.body is not None
@@ -193,7 +193,7 @@ def test_imports_initializer_as_tensor_constant() -> None:
         initializer=[weight],
     )
 
-    module = import_onnx(helper.make_model(graph=graph))
+    module = from_onnx(helper.make_model(graph=graph))
 
     function = module.functions[0]
     assert function.body is not None
@@ -243,7 +243,7 @@ def test_imports_matmul_and_transpose() -> None:
         value_info=[onnx_tensor("rhs_t", [3, 4])],
     )
 
-    module = import_onnx(helper.make_model(graph=graph))
+    module = from_onnx(helper.make_model(graph=graph))
 
     function = module.functions[0]
     assert function.body is not None
@@ -287,7 +287,7 @@ def test_preserves_node_and_graph_output_order() -> None:
         outputs=[onnx_tensor("product", [2]), onnx_tensor("sum", [2])],
     )
 
-    module = import_onnx(helper.make_model(graph=graph))
+    module = from_onnx(helper.make_model(graph=graph))
 
     function = module.functions[0]
     assert function.body is not None

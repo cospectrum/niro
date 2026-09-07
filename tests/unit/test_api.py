@@ -34,22 +34,22 @@ def test_ir_exports_program() -> None:
     )
 
 
-def test_exports_import_onnx() -> None:
+def test_exports_from_onnx() -> None:
     import niro
-    from niro import import_onnx
-    from niro.onnx import import_onnx as onnx_import_onnx
+    from niro import from_onnx
+    from niro.onnx import from_onnx as onnx_from_onnx
 
-    assert import_onnx is onnx_import_onnx
-    assert niro.import_onnx is onnx_import_onnx
+    assert from_onnx is onnx_from_onnx
+    assert niro.from_onnx is onnx_from_onnx
 
 
-def test_exports_mlir() -> None:
+def test_exports_to_mlir() -> None:
     import niro
-    from niro import export_mlir
-    from niro.mlir import export_mlir as mlir_export_mlir
+    from niro import to_mlir
+    from niro.mlir import to_mlir as mlir_to_mlir
 
-    assert export_mlir is mlir_export_mlir
-    assert niro.export_mlir is mlir_export_mlir
+    assert to_mlir is mlir_to_mlir
+    assert niro.to_mlir is mlir_to_mlir
 
 
 def test_exports_mlir_output() -> None:
