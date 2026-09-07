@@ -11,9 +11,10 @@ nav:
   - Python API:
       - niro:
           - niro/index.md
-          - builder: niro/builder.md
           - ir:
               - niro/ir/index.md
+              - builder: niro/ir/builder.md
+              - infer: niro/ir/infer.md
               - operation: niro/ir/operation.md
               - types: niro/ir/types.md
               - values: niro/ir/values.md

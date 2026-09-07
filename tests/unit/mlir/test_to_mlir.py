@@ -2,7 +2,7 @@ import pytest
 from xdsl.dialects import builtin, ml_program
 
 from niro import ir
-from niro.builder import ModuleBuilder
+from niro.ir import ModuleBuilder
 from niro.mlir import format_mlir, to_mlir
 
 

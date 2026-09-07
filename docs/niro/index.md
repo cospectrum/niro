@@ -13,10 +13,6 @@ text = niro.format_mlir(mlir_module)
 ::: niro
     options:
       heading_level: 1
-      members:
-        - from_onnx
-        - to_mlir
-        - format_mlir
-        - write_mlir
+      filters: public
       show_root_full_path: true
       show_root_heading: true

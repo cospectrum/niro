@@ -1,7 +1,7 @@
 import pytest
 
 from niro import ir
-from niro.builder import FunctionBuilder, ModuleBuilder
+from niro.ir import FunctionBuilder, ModuleBuilder
 
 
 def function_builder() -> FunctionBuilder:

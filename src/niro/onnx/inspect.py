@@ -3,7 +3,7 @@
 import onnx
 
 from niro import ir
-from niro.builder import ModuleBuilder
+from niro.ir import ModuleBuilder
 
 from ._from_onnx import _declare_entry_point
 

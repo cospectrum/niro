@@ -5,7 +5,7 @@ from typing import cast
 import onnx
 
 from niro import ir
-from niro.builder import BlockBuilder, FunctionBuilder, ModuleBuilder
+from niro.ir import BlockBuilder, FunctionBuilder, ModuleBuilder
 
 from .op_type import OnnxOpType
 from .value_table import OnnxValueName, OnnxValueTable

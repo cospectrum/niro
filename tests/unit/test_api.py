@@ -27,9 +27,12 @@ def test_ir_exports_program() -> None:
 
     _ = (
         ir.Block,
+        ir.BlockBuilder,
         ir.Function,
+        ir.FunctionBuilder,
         ir.FunctionType,
         ir.Module,
+        ir.ModuleBuilder,
         ir.Region,
     )
 

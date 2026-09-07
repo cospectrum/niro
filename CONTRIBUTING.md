@@ -53,6 +53,11 @@ uv run zensical build --clean
 Write Python docstrings in [Google style][google-docstrings]. Use cross-references
 for Python objects and modules so generated API references are clickable.
 
+Generate API reference pages from public members using `filters: public` or
+filters that exclude private and internal names. Try not to enumerate `members`
+explicitly in documentation directives; new public API members should appear
+automatically.
+
 ## Example models
 
 Model generators are grouped by format under `scripts/`. They write a
