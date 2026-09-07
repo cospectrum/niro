@@ -9,7 +9,7 @@ from onnx import TensorProto, helper
 
 from niro import ir
 from niro.onnx import OnnxOpType, from_onnx
-from niro.onnx.from_onnx import _ONNX_DOMAINS, node_name
+from niro.onnx._from_onnx import _ONNX_DOMAINS, node_name
 
 
 def onnx_tensor(

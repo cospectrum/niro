@@ -5,7 +5,7 @@ import onnx
 from niro import ir
 from niro.builder import ModuleBuilder
 
-from .from_onnx import _declare_entry_point
+from ._from_onnx import _declare_entry_point
 
 
 def inspect_signature(model: onnx.ModelProto) -> ir.Function:

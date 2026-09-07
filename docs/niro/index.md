@@ -1,6 +1,5 @@
 Conversion names are relative to Niro IR: `from_onnx` converts an ONNX model
-to Niro IR, and `to_mlir` converts Niro IR to an MLIR module. Use `format_mlir`
-or `write_mlir` to produce textual MLIR from that module.
+to Niro IR, and `to_mlir` converts Niro IR to an MLIR module.
 
 ```python
 import niro

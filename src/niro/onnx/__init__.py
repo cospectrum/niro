@@ -1,6 +1,6 @@
 """ONNX integration for Niro."""
 
-from niro.onnx.from_onnx import from_onnx
+from niro.onnx._from_onnx import from_onnx
 from niro.onnx.inspect import inspect_signature
 from niro.onnx.op_type import OnnxOpType
 
