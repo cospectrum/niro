@@ -27,7 +27,7 @@ def test_function_first_block_arguments_match_function_inputs() -> None:
 
     block = function.region().first_block()
 
-    assert tuple(argument.type for argument in block.inner.arguments) == (
+    assert tuple(argument.type for argument in block.raw.arguments) == (
         ir.ScalarType.F32,
         ir.ScalarType.I64,
     )
@@ -54,8 +54,8 @@ def test_nested_region_first_block_has_no_function_arguments() -> None:
     then_block = conditional.then_region.first_block()
     else_block = conditional.else_region.first_block()
 
-    assert then_block.inner.arguments == ()
-    assert else_block.inner.arguments == ()
+    assert then_block.raw.arguments == ()
+    assert else_block.raw.arguments == ()
 
 
 def test_rejects_operation_after_terminator() -> None:
@@ -65,7 +65,7 @@ def test_rejects_operation_after_terminator() -> None:
     with pytest.raises(ValueError, match="after a block terminator"):
         block.i32(1)
 
-    assert block.inner.operations == [ir.Return()]
+    assert block.raw.operations == [ir.Return()]
 
 
 def test_rejects_call_to_unknown_function_name() -> None:
@@ -80,7 +80,7 @@ def test_const() -> None:
     block = function_builder().region().block()
     result = block.const(1, ir.ScalarType.I32)
 
-    assert block.inner.operations == [ir.Const(result, 1)]
+    assert block.raw.operations == [ir.Const(result, 1)]
 
 
 def test_transpose() -> None:
@@ -91,7 +91,7 @@ def test_transpose() -> None:
     )
     result = block.transpose(operand, (1, 0))
 
-    assert block.inner.operations[-1] == ir.Transpose(result, operand, (1, 0))
+    assert block.raw.operations[-1] == ir.Transpose(result, operand, (1, 0))
 
 
 def test_add() -> None:
@@ -99,7 +99,7 @@ def test_add() -> None:
     lhs, rhs = block.i32(1), block.i32(2)
     result = block.add(lhs, rhs)
 
-    assert block.inner.operations[-1] == ir.Add(result, lhs, rhs)
+    assert block.raw.operations[-1] == ir.Add(result, lhs, rhs)
 
 
 def test_mul() -> None:
@@ -107,7 +107,7 @@ def test_mul() -> None:
     lhs, rhs = block.i32(1), block.i32(2)
     result = block.mul(lhs, rhs)
 
-    assert block.inner.operations[-1] == ir.Mul(result, lhs, rhs)
+    assert block.raw.operations[-1] == ir.Mul(result, lhs, rhs)
 
 
 def test_matmul() -> None:
@@ -116,7 +116,7 @@ def test_matmul() -> None:
     rhs = block.tensor(bytes(48), ir.TensorType(ir.ScalarType.F32, (3, 4)))
     result = block.matmul(lhs, rhs)
 
-    assert block.inner.operations[-1] == ir.MatMul(result, lhs, rhs)
+    assert block.raw.operations[-1] == ir.MatMul(result, lhs, rhs)
 
 
 def test_call() -> None:
@@ -128,21 +128,21 @@ def test_call() -> None:
     results = block.call(callee)
 
     assert results == ()
-    assert block.inner.operations == [ir.Call("callee", (), ())]
+    assert block.raw.operations == [ir.Call("callee", (), ())]
 
 
 def test_return() -> None:
     block = function_builder().region().block()
     block.return_()
 
-    assert block.inner.operations == [ir.Return()]
+    assert block.raw.operations == [ir.Return()]
 
 
 def test_yield() -> None:
     block = function_builder().region().block()
     block.yield_()
 
-    assert block.inner.operations == [ir.Yield()]
+    assert block.raw.operations == [ir.Yield()]
 
 
 def test_if() -> None:
@@ -150,8 +150,8 @@ def test_if() -> None:
     condition = block.bool(True)
     conditional = block.if_(condition)
 
-    assert block.inner.operations[-1] is conditional.inner
-    assert isinstance(conditional.inner, ir.If)
+    assert block.raw.operations[-1] is conditional.raw
+    assert isinstance(conditional.raw, ir.If)
 
 
 def test_unknown_op() -> None:
@@ -160,7 +160,7 @@ def test_unknown_op() -> None:
     results = block.unknown_op("example.op")
 
     assert results == ()
-    assert block.inner.operations == [ir.UnknownOp("example.op", (), ())]
+    assert block.raw.operations == [ir.UnknownOp("example.op", (), ())]
 
 
 def test_get_global() -> None:
@@ -172,7 +172,7 @@ def test_get_global() -> None:
     result = block.get_global(global_)
 
     assert result.type is ir.ScalarType.I32
-    assert block.inner.operations == [ir.GetGlobal("answer", result)]
+    assert block.raw.operations == [ir.GetGlobal("answer", result)]
 
 
 def test_global_and_function_names_share_namespace() -> None:

@@ -36,7 +36,7 @@ def from_onnx(onnx_model: onnx.ModelProto) -> ir.Module:
         types=_collect_types(graph),
     )
     _import_forward(ctx, module)
-    return module.inner
+    return module.raw
 
 
 def node_name(node: onnx.NodeProto) -> str:
@@ -47,8 +47,8 @@ def node_name(node: onnx.NodeProto) -> str:
 
 def _import_forward(ctx: Ctx, module: ModuleBuilder) -> ir.Function:
     fn = _declare_entry_point(ctx.graph, module)
-    input_names = fn.inner.input_names
-    output_names = fn.inner.output_names
+    input_names = fn.raw.input_names
+    output_names = fn.raw.output_names
     assert input_names is not None
     assert all(input_names)
     assert output_names is not None
@@ -58,7 +58,7 @@ def _import_forward(ctx: Ctx, module: ModuleBuilder) -> ir.Function:
     value_table = OnnxValueTable()
     value_table.define_many(
         (cast(str, name) for name in input_names),
-        block.inner.arguments,
+        block.raw.arguments,
     )
     for node in ctx.graph.node:
         operands = []
@@ -81,11 +81,11 @@ def _import_forward(ctx: Ctx, module: ModuleBuilder) -> ir.Function:
         value_table.define_many(node.output, results)
 
     outputs = [value_table.lookup(cast(str, name)) for name in output_names]
-    for output, ty in zip(outputs, fn.inner.type.outputs, strict=True):
+    for output, ty in zip(outputs, fn.raw.type.outputs, strict=True):
         assert output.type == ty
 
     block.return_(*outputs)
-    return fn.inner
+    return fn.raw
 
 
 def _declare_entry_point(
