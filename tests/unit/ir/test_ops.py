@@ -85,20 +85,20 @@ def test_operations_expose_generic_operands_and_results() -> None:
         assert operation.get_results() == results
 
 
-def test_rejects_invalid_constant_at_construction() -> None:
+def test_rejects_invalid_constant_during_validation() -> None:
     result = ir.Value(ir.ValueId(0), ir.TensorType(ir.ScalarType.F32, (2,)))
 
     with pytest.raises(ValueError, match="4 bytes, expected 8"):
-        ir.Const(result=result, literal=bytes(4))
+        _validate_operation(ir.Const(result=result, literal=bytes(4)))
 
 
-def test_rejects_boolean_arithmetic_at_construction() -> None:
+def test_rejects_boolean_arithmetic_during_validation() -> None:
     lhs = ir.Value(ir.ValueId(0), ir.ScalarType.BOOL)
     rhs = ir.Value(ir.ValueId(1), ir.ScalarType.BOOL)
     result = ir.Value(ir.ValueId(2), ir.ScalarType.BOOL)
 
     with pytest.raises(TypeError, match="does not support boolean"):
-        ir.Add(result=result, lhs=lhs, rhs=rhs)
+        _validate_operation(ir.Add(result=result, lhs=lhs, rhs=rhs))
 
 
 def test_matmul_result_type_is_an_invariant() -> None:
@@ -107,13 +107,26 @@ def test_matmul_result_type_is_an_invariant() -> None:
     valid = ir.Value(ir.ValueId(2), ir.TensorType(ir.ScalarType.F32, (2, 4)))
     invalid = ir.Value(ir.ValueId(2), ir.TensorType(ir.ScalarType.F32, (2, 3)))
 
-    ir.MatMul(result=valid, lhs=lhs, rhs=rhs)
+    _validate_operation(ir.MatMul(result=valid, lhs=lhs, rhs=rhs))
     with pytest.raises(TypeError, match="result type does not match"):
-        ir.MatMul(result=invalid, lhs=lhs, rhs=rhs)
+        _validate_operation(ir.MatMul(result=invalid, lhs=lhs, rhs=rhs))
 
 
-def test_rejects_empty_global_name_at_construction() -> None:
+def test_rejects_empty_global_name_during_validation() -> None:
     result = ir.Value(ir.ValueId(0), ir.ScalarType.I32)
 
     with pytest.raises(ValueError, match="global name cannot be empty"):
-        ir.GetGlobal(name="", result=result)
+        _validate_operation(ir.GetGlobal(name="", result=result))
+
+
+def _validate_operation(operation: ir.Operation) -> None:
+    module = ir.Module(
+        functions=[
+            ir.Function(
+                name="main",
+                type=ir.FunctionType((), ()),
+                body=ir.Region([ir.Block(operations=[operation])]),
+            )
+        ]
+    )
+    ir.validate(module)
