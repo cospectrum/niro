@@ -51,16 +51,9 @@ class Builder[T]:
     inner: T
 
 
-class Ctx:
-    def __init__(self, module: Module, function: Function) -> None:
+class ModuleCtx:
+    def __init__(self, module: Module) -> None:
         self._module = module
-        self.function = function
-        self._next_value_id = 0
-
-    def new_value(self, type: Type) -> Value:
-        value = Value(ValueId(self._next_value_id), type)
-        self._next_value_id += 1
-        return value
 
     def resolve_function(self, target: CallTarget) -> Function:
         name = (
@@ -79,6 +72,18 @@ class Ctx:
             if global_.name == name:
                 return global_
         raise ValueError(f"unknown global: {name!r}")
+
+
+class FunctionCtx(ModuleCtx):
+    def __init__(self, module: Module, function: Function) -> None:
+        super().__init__(module)
+        self.function = function
+        self._next_value_id = 0
+
+    def new_value(self, type: Type) -> Value:
+        value = Value(ValueId(self._next_value_id), type)
+        self._next_value_id += 1
+        return value
 
 
 class ModuleBuilder(Builder[Module]):
@@ -107,7 +112,7 @@ class ModuleBuilder(Builder[Module]):
             attributes=dict(attributes or {}),
         )
         self.inner.functions.append(fn)
-        return FunctionBuilder(Ctx(self.inner, fn), fn)
+        return FunctionBuilder(FunctionCtx(self.inner, fn), fn)
 
     def global_(self, name: SymbolName, type: Type, initializer: Literal) -> Global:
         """Declare and return an initialized global."""
@@ -131,7 +136,7 @@ class FunctionBuilder(Builder[Function]):
 
     def __init__(
         self,
-        ctx: Ctx,
+        ctx: FunctionCtx,
         function: Function,
     ) -> None:
         self._ctx = ctx
@@ -153,7 +158,7 @@ class RegionBuilder(Builder[Region]):
         inner: The [`niro.ir.Region`][] under construction.
     """
 
-    def __init__(self, ctx: Ctx, region: Region) -> None:
+    def __init__(self, ctx: FunctionCtx, region: Region) -> None:
         self._ctx = ctx
         self.inner: Region = region
 
@@ -196,7 +201,7 @@ class BlockBuilder(Builder[Block]):
 
     def __init__(
         self,
-        ctx: Ctx,
+        ctx: FunctionCtx,
         block: Block,
     ) -> None:
         self._ctx = ctx
