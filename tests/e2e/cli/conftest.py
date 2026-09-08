@@ -4,15 +4,15 @@ from typing import Literal
 import onnx
 import pytest
 
-from e2e.cli.onnx_models import ModelCase, onnx_model_cases
-from e2e.cli.support import InstalledCli, install_cli
+from .onnx_models import ModelCase, onnx_model_cases
+from .support import InstalledCli, install_cli
 
 _ONNX_MODEL_CASES = onnx_model_cases()
 
 
 @pytest.fixture(scope="session")
 def installed_cli(tmp_path_factory: pytest.TempPathFactory) -> InstalledCli:
-    project_root = Path(__file__).parents[2]
+    project_root = Path(__file__).parents[3]
     root = tmp_path_factory.mktemp("installed-cli")
     return install_cli(project_root, root)
 

@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from e2e.cli.onnx_models import ModelCase
-from e2e.cli.support import InstalledCli
+from .onnx_models import ModelCase
+from .support import InstalledCli
 
 
 def test_signature(

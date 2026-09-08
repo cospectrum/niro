@@ -2,6 +2,8 @@
 values, program structure, operations, literals, and attributes.
 """
 
+from niro.ir import infer
+from niro.ir.builder import BlockBuilder, FunctionBuilder, ModuleBuilder
 from niro.ir.data import AttributeName, Attributes, AttributeValue, Literal
 from niro.ir.operation import Operation
 from niro.ir.ops import (
@@ -18,8 +20,6 @@ from niro.ir.ops import (
     UnknownOp,
     Yield,
     as_op,
-    matmul_result_type,
-    transpose_result_type,
 )
 from niro.ir.program import (
     Block,
@@ -39,10 +39,12 @@ __all__ = [
     "AttributeValue",
     "Attributes",
     "Block",
+    "BlockBuilder",
     "Call",
     "Const",
     "Dimension",
     "Function",
+    "FunctionBuilder",
     "FunctionType",
     "GetGlobal",
     "Global",
@@ -50,6 +52,7 @@ __all__ = [
     "Literal",
     "MatMul",
     "Module",
+    "ModuleBuilder",
     "Mul",
     "Op",
     "Operation",
@@ -66,6 +69,5 @@ __all__ = [
     "ValueId",
     "Yield",
     "as_op",
-    "matmul_result_type",
-    "transpose_result_type",
+    "infer",
 ]

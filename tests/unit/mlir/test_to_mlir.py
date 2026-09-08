@@ -2,8 +2,8 @@ import pytest
 from xdsl.dialects import builtin, ml_program
 
 from niro import ir
-from niro.builder import ModuleBuilder
-from niro.mlir import export_mlir, format_mlir
+from niro.ir import ModuleBuilder
+from niro.mlir import format_mlir, to_mlir
 
 
 def test_lowers_tensor_add() -> None:
@@ -17,7 +17,7 @@ def test_lowers_tensor_add() -> None:
     result = block.add(*block.inner.arguments)
     block.return_(result)
 
-    text = format_mlir(export_mlir(module.inner))
+    text = format_mlir(to_mlir(module.inner))
 
     assert "func.func @model" in text
     assert "%2 = arith.addf %0, %1 : tensor<2x2xf32>" in text
@@ -37,7 +37,7 @@ def test_lowers_tensor_weight_to_private_immutable_global() -> None:
     result = block.matmul(block.inner.arguments[0], weight)
     block.return_(result)
 
-    lowered = export_mlir(module.inner)
+    lowered = to_mlir(module.inner)
 
     operations = list(lowered.body.block.ops)
     global_ = operations[0]
@@ -67,7 +67,7 @@ def test_lowers_private_helper_and_call() -> None:
     (result,) = main_block.call(helper, main_block.inner.arguments)
     main_block.return_(result)
 
-    text = format_mlir(export_mlir(module.inner))
+    text = format_mlir(to_mlir(module.inner))
 
     assert "func.func @helper" in text
     assert "func.func @model" in text
@@ -86,7 +86,7 @@ def test_lowers_static_transpose() -> None:
     result = block.transpose(block.inner.arguments[0], [1, 0])
     block.return_(result)
 
-    text = format_mlir(export_mlir(module.inner))
+    text = format_mlir(to_mlir(module.inner))
 
     assert "%1 = tensor.empty() : tensor<3x2xf32>" in text
     assert "linalg.transpose" in text
@@ -122,7 +122,7 @@ def test_lowers_if_and_yield() -> None:
     )
     module = ir.Module(functions=[function])
 
-    text = format_mlir(export_mlir(module))
+    text = format_mlir(to_mlir(module))
 
     assert "scf.if %0 -> (i1)" in text
     assert text.count("scf.yield %0 : i1") == 2
@@ -136,7 +136,7 @@ def test_preserves_metadata_with_niro_namespace() -> None:
     function.region().block().return_()
     module.inner.attributes["version"] = 1
 
-    text = format_mlir(export_mlir(module.inner))
+    text = format_mlir(to_mlir(module.inner))
 
     assert "niro.version = 1 : i64" in text
     assert 'niro.note = "function"' in text
@@ -160,7 +160,7 @@ def test_rejects_unknown_operation() -> None:
         NotImplementedError,
         match="cannot lower unknown operation to MLIR: onnx.Relu",
     ):
-        export_mlir(module.inner)
+        to_mlir(module.inner)
 
 
 def test_rejects_dynamic_matmul() -> None:
@@ -184,4 +184,4 @@ def test_rejects_dynamic_matmul() -> None:
         NotImplementedError,
         match="matmul requires a static ranked tensor",
     ):
-        export_mlir(module.inner)
+        to_mlir(module.inner)

@@ -12,34 +12,29 @@ Install the locked development environment with [uv]:
 uv sync --locked
 ```
 
-Alternatively, enter the Nix development shell, which provides uv:
-
-```sh
-nix develop
-```
 
 ## Testing
 
 Run the unit and integration tests during development:
 
 ```sh
-uv run pytest tests
+uv run pytest tests/unit
 ```
 
 Run the end-to-end tests:
 
 ```sh
-uv run pytest e2e
+uv run pytest tests/e2e
 ```
 
-Run the complete local CI workflow before submitting a change:
+You can run the complete local CI workflow before submitting a change:
 
 ```sh
 nix run .#ci
 ```
 
-Unit tests mirror the source tree under `tests/`. End-to-end tests live under
-`e2e/`, grouped by the interface or workflow they exercise.
+Unit tests mirror the source tree under `tests/unit/`. End-to-end tests live under
+`tests/e2e/`, grouped by the interface or workflow they exercise.
 
 ## Documentation
 
@@ -57,6 +52,11 @@ uv run zensical build --clean
 
 Write Python docstrings in [Google style][google-docstrings]. Use cross-references
 for Python objects and modules so generated API references are clickable.
+
+Generate API reference pages from public members using `filters: public` or
+filters that exclude private and internal names. Try not to enumerate `members`
+explicitly in documentation directives; new public API members should appear
+automatically.
 
 ## Example models
 

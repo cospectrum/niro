@@ -1,4 +1,4 @@
-::: niro.builder
+::: niro.ir.builder
     options:
       heading_level: 1
       filters:
