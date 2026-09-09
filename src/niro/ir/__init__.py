@@ -1,5 +1,18 @@
 """Niro IR is a strongly typed, SSA-based representation composed of types,
 values, program structure, operations, literals, and attributes.
+
+Construct IR programs with `ir.ModuleBuilder`, `ir.FunctionBuilder`, and
+`ir.BlockBuilder`. See the [builder reference][niro.ir.builder] for their methods.
+
+```python
+from niro import ir
+
+module = ir.ModuleBuilder()
+function = module.function(name="main", type=ir.FunctionType((), ()))
+block = function.region().first_block()
+block.return_()
+verified_module = module.verify()
+```
 """
 
 from niro.ir import infer

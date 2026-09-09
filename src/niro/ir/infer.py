@@ -1,4 +1,17 @@
-"""Infer operation result types from operand types and operation parameters."""
+"""Infer operation result types from operand types and operation parameters.
+
+Use `ir.infer` to derive result types before constructing operations. Builders
+and operation validation use the same inference functions.
+
+```python
+from niro import ir
+
+lhs = ir.TensorType(ir.ScalarType.F32, (2, 3))
+rhs = ir.TensorType(ir.ScalarType.F32, (3, 4))
+result_type = ir.infer.matmul_result_type(lhs, rhs)
+transposed_type = ir.infer.transpose_result_type(result_type, (1, 0))
+```
+"""
 
 from niro import ir
 from niro.ir.types import TensorType, Type
