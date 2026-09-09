@@ -1,8 +1,7 @@
 """Niro IR is a strongly typed, SSA-based representation composed of types,
 values, program structure, operations, literals, and attributes.
 
-Construct programs with [`niro.builder`][] and verify them with
-[`niro.verify.module`][].
+You can construct programs with [`niro.builder.ModuleBuilder`][].
 """
 
 from niro.ir import infer
