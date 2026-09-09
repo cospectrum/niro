@@ -1,24 +1,12 @@
 """Niro IR is a strongly typed, SSA-based representation composed of types,
 values, program structure, operations, literals, and attributes.
 
-Construct IR programs with `ir.ModuleBuilder`, `ir.FunctionBuilder`, and
-`ir.BlockBuilder`. See the [builder reference][niro.ir.builder] for their methods.
-
-```python
-from niro import ir
-
-module = ir.ModuleBuilder()
-function = module.function(name="main", type=ir.FunctionType((), ()))
-block = function.region().first_block()
-block.return_()
-verified_module = module.verify()
-```
+You can construct programs with [`niro.builder.ModuleBuilder`][].
 """
 
 from niro.ir import infer
-from niro.ir.builder import BlockBuilder, FunctionBuilder, ModuleBuilder
+from niro.ir.accessors import get_operands, get_regions, get_results
 from niro.ir.data import AttributeName, Attributes, AttributeValue, Literal
-from niro.ir.operation import Operation
 from niro.ir.ops import (
     Add,
     Call,
@@ -32,7 +20,6 @@ from niro.ir.ops import (
     Transpose,
     UnknownOp,
     Yield,
-    as_op,
 )
 from niro.ir.program import (
     Block,
@@ -46,7 +33,6 @@ from niro.ir.program import (
 )
 from niro.ir.types import Dimension, ScalarType, Shape, TensorType, Type
 from niro.ir.values import Value, ValueId
-from niro.ir.verifier import verify
 
 __all__ = [
     "Add",
@@ -54,12 +40,10 @@ __all__ = [
     "AttributeValue",
     "Attributes",
     "Block",
-    "BlockBuilder",
     "Call",
     "Const",
     "Dimension",
     "Function",
-    "FunctionBuilder",
     "FunctionType",
     "GetGlobal",
     "Global",
@@ -67,10 +51,8 @@ __all__ = [
     "Literal",
     "MatMul",
     "Module",
-    "ModuleBuilder",
     "Mul",
     "Op",
-    "Operation",
     "Region",
     "Return",
     "ScalarType",
@@ -84,7 +66,8 @@ __all__ = [
     "ValueId",
     "VerifiedModule",
     "Yield",
-    "as_op",
+    "get_operands",
+    "get_regions",
+    "get_results",
     "infer",
-    "verify",
 ]

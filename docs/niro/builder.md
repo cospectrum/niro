@@ -1,9 +1,10 @@
-::: niro.ir.operation
+::: niro.builder
     options:
+      heading_level: 1
       filters:
         - "!^_"
-      heading_level: 1
-      show_bases: false
+        - "!^(ModuleCtx|FunctionCtx)$"
+      merge_init_into_class: false
       show_if_no_docstring: true
       show_root_full_path: true
       show_root_heading: true

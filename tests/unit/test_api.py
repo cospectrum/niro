@@ -27,15 +27,27 @@ def test_ir_exports_program() -> None:
 
     _ = (
         ir.Block,
-        ir.BlockBuilder,
         ir.Function,
-        ir.FunctionBuilder,
         ir.FunctionType,
         ir.Module,
         ir.VerifiedModule,
-        ir.ModuleBuilder,
         ir.Region,
     )
+
+
+def test_builder_and_verify_have_separate_namespaces() -> None:
+    import niro
+    from niro import builder, ir, verify
+
+    assert niro.builder is builder
+    assert niro.verify is verify
+    module = builder.ModuleBuilder()
+    assert verify.module(module.raw) is module.raw
+    assert module.verify() is module.raw
+    for name in ("ModuleBuilder", "FunctionBuilder", "BlockBuilder", "verify"):
+        assert not hasattr(ir, name)
+        if name != "verify":
+            assert not hasattr(niro, name)
 
 
 def test_exports_from_onnx() -> None:

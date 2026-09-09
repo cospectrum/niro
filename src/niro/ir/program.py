@@ -5,16 +5,15 @@ Re-exported in [`niro.ir`][].
 
 from __future__ import annotations
 
-from dataclasses import field
-from typing import NewType
-
-from pydantic import InstanceOf
-from pydantic.dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, NewType
 
 from niro.ir.data import Attributes, Literal
-from niro.ir.operation import Operation
 from niro.ir.types import Type
 from niro.ir.values import Value
+
+if TYPE_CHECKING:
+    from niro.ir.ops import Op
 
 SymbolName = str
 
@@ -22,7 +21,7 @@ SymbolName = str
 @dataclass(slots=True)
 class Block:
     arguments: tuple[Value, ...] = ()
-    operations: list[InstanceOf[Operation]] = field(default_factory=list)
+    operations: list[Op] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -80,7 +79,7 @@ class Module:
 
 
 VerifiedModule = NewType("VerifiedModule", Module)
-"""A module that has passed [`niro.ir.verify`][].
+"""A module that has passed [`niro.verify.module`][].
 
 This is a static type marker, not an immutable snapshot. Verify again after
 changing the module.

@@ -4,8 +4,8 @@ from typing import cast
 
 import onnx
 
-from niro import ir
-from niro.ir import BlockBuilder, FunctionBuilder, ModuleBuilder, VerifiedModule
+from niro import builder, ir
+from niro.ir import VerifiedModule
 from niro.onnx.op_type import OnnxOpType
 
 from .value_table import OnnxValueName, OnnxValueTable
@@ -28,7 +28,7 @@ class Ctx:
 def from_onnx(onnx_model: onnx.ModelProto) -> VerifiedModule:
     """Convert an ONNX model to verified Niro IR."""
     graph = onnx_model.graph
-    module = ir.ModuleBuilder()
+    module = builder.ModuleBuilder()
     weights = _import_initializers(graph, module)
     ctx = Ctx(
         graph=graph,
@@ -45,7 +45,7 @@ def node_name(node: onnx.NodeProto) -> str:
     return f"{domain}.{node.op_type}"
 
 
-def _import_forward(ctx: Ctx, module: ModuleBuilder) -> ir.Function:
+def _import_forward(ctx: Ctx, module: builder.ModuleBuilder) -> ir.Function:
     fn = _declare_entry_point(ctx.graph, module)
     input_names = fn.raw.input_names
     output_names = fn.raw.output_names
@@ -90,8 +90,8 @@ def _import_forward(ctx: Ctx, module: ModuleBuilder) -> ir.Function:
 
 def _declare_entry_point(
     graph: onnx.GraphProto,
-    module: ModuleBuilder,
-) -> FunctionBuilder:
+    module: builder.ModuleBuilder,
+) -> builder.FunctionBuilder:
     initializer_names = {t.name for t in graph.initializer}
     pb_inputs = [val for val in graph.input if val.name not in initializer_names]
     pb_outputs = [val for val in graph.output]
@@ -110,7 +110,7 @@ def _declare_entry_point(
 
 def _import_node(
     ctx: Ctx,
-    block: BlockBuilder,
+    block: builder.BlockBuilder,
     node: onnx.NodeProto,
     operands: Sequence[ir.Value],
 ) -> ir.Value | Sequence[ir.Value]:
@@ -134,7 +134,7 @@ def _import_node(
 
 
 def _import_transpose(
-    block: BlockBuilder,
+    block: builder.BlockBuilder,
     node: onnx.NodeProto,
     operands: Sequence[ir.Value],
 ) -> ir.Value:
@@ -154,7 +154,7 @@ def _import_transpose(
 
 def _import_unknown_node(
     ctx: Ctx,
-    block: BlockBuilder,
+    block: builder.BlockBuilder,
     node: onnx.NodeProto,
     operands: Sequence[ir.Value],
 ) -> Sequence[ir.Value]:
@@ -168,7 +168,7 @@ def _import_unknown_node(
 
 def _import_initializers(
     graph: onnx.GraphProto,
-    module: ModuleBuilder,
+    module: builder.ModuleBuilder,
 ) -> dict[OnnxValueName, ir.Global]:
     sym_table: dict[OnnxValueName, ir.Global] = {}
     for t in graph.initializer:

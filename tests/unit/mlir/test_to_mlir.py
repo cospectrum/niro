@@ -2,12 +2,12 @@ import pytest
 from xdsl.dialects import builtin, ml_program
 
 import niro
-from niro import ir
+from niro import builder, ir, verify
 
 
 def test_lowers_tensor_add() -> None:
     tensor_type = ir.TensorType(element_type=ir.ScalarType.F32, shape=(2, 2))
-    module = ir.ModuleBuilder()
+    module = builder.ModuleBuilder()
     function = module.function(
         name="model",
         type=ir.FunctionType((tensor_type, tensor_type), (tensor_type,)),
@@ -26,7 +26,7 @@ def test_lowers_tensor_add() -> None:
 def test_lowers_tensor_weight_to_private_immutable_global() -> None:
     tensor_type = ir.TensorType(element_type=ir.ScalarType.F32, shape=(2, 2))
     data = bytes(range(16))
-    module = ir.ModuleBuilder()
+    module = builder.ModuleBuilder()
     function = module.function(
         name="model",
         type=ir.FunctionType((tensor_type,), (tensor_type,)),
@@ -51,7 +51,7 @@ def test_lowers_tensor_weight_to_private_immutable_global() -> None:
 
 
 def test_lowers_private_helper_and_call() -> None:
-    module = ir.ModuleBuilder()
+    module = builder.ModuleBuilder()
     helper = module.function(
         name="helper",
         type=ir.FunctionType((ir.ScalarType.I32,), (ir.ScalarType.I32,)),
@@ -76,7 +76,7 @@ def test_lowers_private_helper_and_call() -> None:
 def test_lowers_static_transpose() -> None:
     input_type = ir.TensorType(element_type=ir.ScalarType.F32, shape=(2, 3))
     output_type = ir.TensorType(element_type=ir.ScalarType.F32, shape=(3, 2))
-    module = ir.ModuleBuilder()
+    module = builder.ModuleBuilder()
     function = module.function(
         name="model",
         type=ir.FunctionType((input_type,), (output_type,)),
@@ -121,7 +121,7 @@ def test_lowers_if_and_yield() -> None:
     )
     module = ir.Module(functions=[function])
 
-    text = niro.format_mlir(niro.to_mlir(ir.verify(module)))
+    text = niro.format_mlir(niro.to_mlir(verify.module(module)))
 
     assert "scf.if %0 -> (i1)" in text
     assert text.count("scf.yield %0 : i1") == 2
@@ -129,7 +129,7 @@ def test_lowers_if_and_yield() -> None:
 
 
 def test_preserves_metadata_with_niro_namespace() -> None:
-    module = ir.ModuleBuilder()
+    module = builder.ModuleBuilder()
     function = module.function(name="model", type=ir.FunctionType((), ()))
     function.raw.attributes["note"] = "function"
     function.region().block().return_()
@@ -142,7 +142,7 @@ def test_preserves_metadata_with_niro_namespace() -> None:
 
 
 def test_rejects_unknown_operation() -> None:
-    module = ir.ModuleBuilder()
+    module = builder.ModuleBuilder()
     function = module.function(
         name="model",
         type=ir.FunctionType((ir.ScalarType.F32,), (ir.ScalarType.F32,)),
@@ -167,7 +167,7 @@ def test_rejects_dynamic_matmul() -> None:
         element_type=ir.ScalarType.F32,
         shape=(None, 2),
     )
-    module = ir.ModuleBuilder()
+    module = builder.ModuleBuilder()
     function = module.function(
         name="model",
         type=ir.FunctionType((tensor_type, tensor_type), (tensor_type,)),

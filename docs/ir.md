@@ -85,16 +85,21 @@ operand. The value's definition is identified by its position in the IR.
 
 ## Program
 
-Niro uses the following hierarchy:
+Niro uses the following hierarchy. `Name*` means zero or more elements, and
+`Name?` means zero or one:
 
 ```text
 Module
-├── Global
-└── Function
-    └── Region
-        └── Block
-            └── Operation
+├── Global*
+└── Function*
+    └── Region?
+        └── Block*
+            └── Op*
+                └── Region*
 ```
+
+Regions nested in operations repeat the same region/block/operation structure.
+Validity rules below constrain the number of elements in each context.
 
 ### `Module`
 

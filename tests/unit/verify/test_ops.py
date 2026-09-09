@@ -1,11 +1,11 @@
 import pytest
 
-from niro import ir
+from niro import ir, verify
 
 
 def _module_for_op(op: ir.Op) -> ir.Module:
-    arguments = op.get_operands()
-    results = op.get_results()
+    arguments = ir.get_operands(op)
+    results = ir.get_results(op)
     return ir.Module(
         functions=[
             ir.Function(
@@ -37,7 +37,7 @@ def _module_for_op(op: ir.Op) -> ir.Module:
 def test_valid_constants(type: ir.Type, literal: ir.Literal) -> None:
     module = _module_for_op(ir.Const(ir.Value(ir.ValueId(0), type), literal))
 
-    assert ir.verify(module) is module
+    assert verify.module(module) is module
 
 
 @pytest.mark.parametrize(
@@ -71,7 +71,7 @@ def test_invalid_constants(
     module = _module_for_op(ir.Const(ir.Value(ir.ValueId(0), type), literal))
 
     with pytest.raises(error, match=message):
-        ir.verify(module)
+        verify.module(module)
 
 
 @pytest.mark.parametrize("operation", [ir.Add, ir.Mul])
@@ -83,7 +83,7 @@ def test_valid_arithmetic(operation: type[ir.Add | ir.Mul], type: ir.Type) -> No
     lhs, rhs, result = (ir.Value(ir.ValueId(index), type) for index in range(3))
     module = _module_for_op(operation(result, lhs, rhs))
 
-    assert ir.verify(module) is module
+    assert verify.module(module) is module
 
 
 @pytest.mark.parametrize("operation", [ir.Add, ir.Mul])
@@ -116,7 +116,7 @@ def test_invalid_arithmetic(
     )
 
     with pytest.raises(TypeError, match=message):
-        ir.verify(_module_for_op(op))
+        verify.module(_module_for_op(op))
 
 
 def _matmul(lhs: ir.Type, rhs: ir.Type, result: ir.Type) -> ir.MatMul:
@@ -142,7 +142,7 @@ def test_valid_matmul(
     )
     module = _module_for_op(op)
 
-    assert ir.verify(module) is module
+    assert verify.module(module) is module
 
 
 @pytest.mark.parametrize(
@@ -198,7 +198,7 @@ def test_invalid_matmul(
     module = _module_for_op(_matmul(lhs, rhs, result))
 
     with pytest.raises(error, match=message):
-        ir.verify(module)
+        verify.module(module)
 
 
 @pytest.mark.parametrize(
@@ -217,7 +217,7 @@ def test_valid_transpose(
     result = ir.Value(ir.ValueId(1), ir.TensorType(ir.ScalarType.F32, result_shape))
     module = _module_for_op(ir.Transpose(result, operand, permutation))
 
-    assert ir.verify(module) is module
+    assert verify.module(module) is module
 
 
 @pytest.mark.parametrize(
@@ -261,12 +261,12 @@ def test_invalid_transpose(
     )
 
     with pytest.raises(error, match=message):
-        ir.verify(_module_for_op(op))
+        verify.module(_module_for_op(op))
 
 
 def test_unknown_operation_requires_a_name() -> None:
     with pytest.raises(ValueError, match="UnknownOp name cannot be empty"):
-        ir.verify(_module_for_op(ir.UnknownOp("", (), ())))
+        verify.module(_module_for_op(ir.UnknownOp("", (), ())))
 
 
 def test_invalid_constant_in_nested_branch_is_verified() -> None:
@@ -280,4 +280,4 @@ def test_invalid_constant_in_nested_branch_is_verified() -> None:
     )
 
     with pytest.raises(TypeError, match="constant value"):
-        ir.verify(_module_for_op(conditional))
+        verify.module(_module_for_op(conditional))

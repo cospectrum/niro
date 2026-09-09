@@ -338,8 +338,8 @@ def as_onnx_unknown_op(operation: ir.Op, name: str) -> ir.UnknownOp:
             raise TypeError(f"operation has no ONNX node representation: {operation!r}")
     return ir.UnknownOp(
         name=name,
-        operands=operation.get_operands(),
-        results=operation.get_results(),
+        operands=ir.get_operands(operation),
+        results=ir.get_results(operation),
         attributes=attributes,
     )
 
