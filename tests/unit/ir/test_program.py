@@ -40,4 +40,4 @@ def test_optional_interface_names() -> None:
 
     assert function.input_names == ("value", None)
     assert function.output_names == (None,)
-    assert ir.validate(ir.Module(functions=[function])).functions == [function]
+    assert ir.verify(ir.Module(functions=[function])).functions == [function]

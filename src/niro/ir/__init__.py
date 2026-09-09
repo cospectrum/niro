@@ -31,8 +31,8 @@ from niro.ir.program import (
     SymbolName,
 )
 from niro.ir.types import Dimension, ScalarType, Shape, TensorType, Type
-from niro.ir.validator import validate
 from niro.ir.values import Value, ValueId
+from niro.ir.verifier import verify
 
 __all__ = [
     "Add",
@@ -71,5 +71,5 @@ __all__ = [
     "Yield",
     "as_op",
     "infer",
-    "validate",
+    "verify",
 ]
