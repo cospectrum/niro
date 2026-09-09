@@ -22,9 +22,6 @@ def test_as_op_rejects_extension_operations() -> None:
         def get_results(self) -> tuple[ir.Value, ...]:
             return ()
 
-        def is_terminator(self) -> bool:
-            return False
-
     assert ir.as_op(ir.Return()) == ir.Return()
     with pytest.raises(TypeError, match="not a built-in Niro operation"):
         ir.as_op(ExtensionOp())

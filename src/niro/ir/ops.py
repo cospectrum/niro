@@ -24,9 +24,6 @@ class _BuiltinOperation(Operation):
     def get_results(self) -> tuple[Value, ...]:
         return _get_results(cast("Op", self))
 
-    def is_terminator(self) -> bool:
-        return _is_terminator(cast("Op", self))
-
 
 @dataclass(frozen=True, slots=True)
 class Const(_BuiltinOperation):
@@ -159,7 +156,3 @@ def _get_results(op: Op) -> tuple[Value, ...]:
             return results
         case Return() | Yield():
             return ()
-
-
-def _is_terminator(op: Op) -> bool:
-    return isinstance(op, (Return, Yield))

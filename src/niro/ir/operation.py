@@ -19,8 +19,3 @@ class Operation(ABC):
     def get_results(self) -> tuple[Value, ...]:
         """Return the SSA values produced by this operation."""
         raise NotImplementedError
-
-    @abstractmethod
-    def is_terminator(self) -> bool:
-        """Return whether this operation terminates its containing block."""
-        raise NotImplementedError
