@@ -43,7 +43,7 @@ def test_function_block_accepts_explicit_argument_types() -> None:
     assert block.raw.arguments[0].type is ir.ScalarType.I64
 
 
-def test_nested_region_first_block_has_no_function_arguments() -> None:
+def test_nested_region_block_has_no_function_arguments() -> None:
     function = ModuleBuilder().function(
         name="main",
         type=ir.FunctionType((ir.ScalarType.F32,), ()),
@@ -51,8 +51,8 @@ def test_nested_region_first_block_has_no_function_arguments() -> None:
     block = function.region().first_block()
     conditional = block.if_(block.bool(True))
 
-    then_block = conditional.then_region.first_block()
-    else_block = conditional.else_region.first_block()
+    then_block = conditional.then_region.block()
+    else_block = conditional.else_region.block()
 
     assert then_block.raw.arguments == ()
     assert else_block.raw.arguments == ()

@@ -126,17 +126,17 @@ class FunctionBuilder(Builder[Function]):
         self._ctx = ctx
         self.raw: Function = function
 
-    def region(self) -> RegionBuilder:
+    def region(self) -> FunctionRegionBuilder:
         """Create and return the function body region."""
         if self.raw.body:
             raise ValueError("function already has a body")
         body = Region()
         self.raw.body = body
-        return RegionBuilder(self._ctx, body)
+        return FunctionRegionBuilder(self._ctx, body)
 
 
-class RegionBuilder(Builder[Region]):
-    """Builder for [`niro.ir.Region`][].
+class FunctionRegionBuilder(Builder[Region]):
+    """Builder for a function body region, with entry-block argument inference.
 
     Attributes:
         raw: The [`niro.ir.Region`][] under construction.
@@ -146,13 +146,6 @@ class RegionBuilder(Builder[Region]):
         self._ctx = ctx
         self.raw: Region = region
 
-    def first_block(self) -> BlockBuilder:
-        """Append the first block, deriving function input arguments."""
-        if self.raw.blocks:
-            raise ValueError("region already has a first block")
-        arg_types = self._function_input_types if self._is_function_body else ()
-        return self.block(arg_types)
-
     def block(self, arg_types: Sequence[Type] = ()) -> BlockBuilder:
         """Append a block with arguments of the given types."""
         args = tuple(self._ctx.new_value(type) for type in arg_types)
@@ -161,13 +154,32 @@ class RegionBuilder(Builder[Region]):
         self.raw.blocks.append(block)
         return builder
 
-    @property
-    def _is_function_body(self) -> bool:
-        return self.raw is self._ctx.function.body
+    def first_block(self) -> BlockBuilder:
+        """Append the first block, deriving function input arguments."""
+        if self.raw.blocks:
+            raise ValueError("function region already has a first block")
+        return self.block(self._ctx.function.type.inputs)
 
-    @property
-    def _function_input_types(self) -> tuple[Type, ...]:
-        return self._ctx.function.type.inputs
+
+class IfRegionBuilder(Builder[Region]):
+    """Builder for an If branch containing a single argument-free block.
+
+    Attributes:
+        raw: The [`niro.ir.Region`][] under construction.
+    """
+
+    def __init__(self, ctx: FunctionCtx, region: Region) -> None:
+        self._ctx = ctx
+        self.raw: Region = region
+
+    def block(self) -> BlockBuilder:
+        """Create the branch's only block, without arguments."""
+        if self.raw.blocks:
+            raise ValueError("if region already has a block")
+        block = Block()
+        builder = BlockBuilder(self._ctx, block)
+        self.raw.blocks.append(block)
+        return builder
 
 
 class BlockBuilder(Builder[Block]):
@@ -333,8 +345,8 @@ class BlockBuilder(Builder[Block]):
         result_types: Sequence[Type] = (),
     ) -> IfBuilder:
         """Append a conditional and return its region builders."""
-        then_region = RegionBuilder(self._ctx, Region())
-        else_region = RegionBuilder(self._ctx, Region())
+        then_region = IfRegionBuilder(self._ctx, Region())
+        else_region = IfRegionBuilder(self._ctx, Region())
 
         def create(results: tuple[Value, ...]) -> If:
             return If(
@@ -408,16 +420,16 @@ class IfBuilder(Builder[If]):
 
     Attributes:
         raw: The [`niro.ir.If`][] under construction.
-        then_region: The [`niro.ir.builder.RegionBuilder`][] for the taken branch.
-        else_region: The [`niro.ir.builder.RegionBuilder`][] for the other branch.
+        then_region: The [`niro.ir.builder.IfRegionBuilder`][] for the taken branch.
+        else_region: The [`niro.ir.builder.IfRegionBuilder`][] for the other branch.
     """
 
     def __init__(
         self,
         if_: If,
-        then_region: RegionBuilder,
-        else_region: RegionBuilder,
+        then_region: IfRegionBuilder,
+        else_region: IfRegionBuilder,
     ) -> None:
         self.raw: If = if_
-        self.then_region: RegionBuilder = then_region
-        self.else_region: RegionBuilder = else_region
+        self.then_region: IfRegionBuilder = then_region
+        self.else_region: IfRegionBuilder = else_region
