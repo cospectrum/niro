@@ -2,10 +2,24 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import cast
+from collections import Counter
+from collections.abc import Iterator, Mapping
+from typing import assert_never, cast
 
-from niro.ir.ops import Call, GetGlobal, If, Op, Return, Yield
+from niro.ir.ops import (
+    Add,
+    Call,
+    Const,
+    GetGlobal,
+    If,
+    MatMul,
+    Mul,
+    Op,
+    Return,
+    Transpose,
+    UnknownOp,
+    Yield,
+)
 from niro.ir.program import Block, Function, Global, Module, Region, SymbolName
 from niro.ir.types import ScalarType, Type
 from niro.ir.values import Value, ValueId
@@ -27,13 +41,12 @@ def verify(module: Module) -> Module:
 
 
 def _verify_symbol_names(module: Module) -> None:
-    seen_names: set[SymbolName] = set()
-    for symbol in [*module.functions, *module.globals]:
-        if not symbol.name:
-            raise ValueError("module symbol names cannot be empty")
-        if symbol.name in seen_names:
-            raise ValueError(f"duplicate module symbol: {symbol.name!r}")
-        seen_names.add(symbol.name)
+    names = [symbol.name for symbol in [*module.functions, *module.globals]]
+    for name, count in Counter(names).items():
+        if not name:
+            raise ValueError("module symbol names cannot be empty")            
+        if count > 1:
+            raise ValueError(f"duplicate module symbol: {name!r}")
 
 
 def _verify_function(
@@ -43,6 +56,7 @@ def _verify_function(
 ) -> None:
     if function.body is None:
         return
+    _verify_value_ids(function.body)
     _verify_region(
         function.body,
         {},
@@ -51,20 +65,25 @@ def _verify_function(
         Return,
         functions=functions,
         globals_=globals_,
-        defined_ids=set(),
     )
 
 
-def _define_values(
-    values: tuple[Value, ...],
-    scope: dict[ValueId, Type],
-    defined_ids: set[ValueId],
-) -> None:
-    for value in values:
-        if value.id in defined_ids:
-            raise ValueError(f"duplicate value ID in function: {value.id}")
-        defined_ids.add(value.id)
-        scope[value.id] = value.type
+def _iter_defined_values(region: Region) -> Iterator[Value]:
+    for block in region.blocks:
+        yield from block.arguments
+        for operation in block.operations:
+            op = cast(Op, operation)
+            yield from op.get_results()
+            if isinstance(op, If):
+                yield from _iter_defined_values(op.then_region)
+                yield from _iter_defined_values(op.else_region)
+
+
+def _verify_value_ids(region: Region) -> None:
+    counts = Counter(value.id for value in _iter_defined_values(region))
+    for value_id, count in counts.items():
+        if count > 1:
+            raise ValueError(f"duplicate value ID in function: {value_id}")
 
 
 def _verify_region(
@@ -76,7 +95,6 @@ def _verify_region(
     *,
     functions: Mapping[SymbolName, Function],
     globals_: Mapping[SymbolName, Global],
-    defined_ids: set[ValueId],
 ) -> None:
     if not region.blocks:
         raise ValueError("region must contain a block")
@@ -92,7 +110,6 @@ def _verify_region(
             terminator,
             functions=functions,
             globals_=globals_,
-            defined_ids=defined_ids,
         )
 
 
@@ -104,10 +121,8 @@ def _verify_block(
     *,
     functions: Mapping[SymbolName, Function],
     globals_: Mapping[SymbolName, Global],
-    defined_ids: set[ValueId],
 ) -> None:
-    scope = dict(outer_scope)
-    _define_values(block.arguments, scope, defined_ids)
+    scope = {**outer_scope, **{value.id: value.type for value in block.arguments}}
     if not block.operations or not isinstance(block.operations[-1], terminator):
         raise ValueError(f"region must end with {terminator.__name__}")
 
@@ -153,7 +168,6 @@ def _verify_block(
                     Yield,
                     functions=functions,
                     globals_=globals_,
-                    defined_ids=defined_ids,
                 )
                 if op.else_region.blocks or result_types:
                     _verify_region(
@@ -164,7 +178,11 @@ def _verify_block(
                         Yield,
                         functions=functions,
                         globals_=globals_,
-                        defined_ids=defined_ids,
                     )
 
-        _define_values(op.get_results(), scope, defined_ids)
+            case Const() | Add() | Mul() | MatMul() | Transpose() | UnknownOp():
+                pass
+            case _ as unreachable:
+                assert_never(unreachable)
+
+        scope.update((value.id, value.type) for value in op.get_results())
