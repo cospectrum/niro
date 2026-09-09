@@ -44,7 +44,7 @@ def _verify_symbol_names(module: Module) -> None:
     names = [symbol.name for symbol in [*module.functions, *module.globals]]
     for name, count in Counter(names).items():
         if not name:
-            raise ValueError("module symbol names cannot be empty")            
+            raise ValueError("module symbol names cannot be empty")
         if count > 1:
             raise ValueError(f"duplicate module symbol: {name!r}")
 
@@ -58,11 +58,11 @@ def _verify_function(
         return
     _verify_value_ids(function.body)
     _verify_region(
-        function.body,
-        {},
-        function.type.inputs,
-        function.type.outputs,
-        Return,
+        region=function.body,
+        outer_scope={},
+        input_types=function.type.inputs,
+        output_types=function.type.outputs,
+        terminator=Return,
         functions=functions,
         globals_=globals_,
     )
@@ -161,21 +161,21 @@ def _verify_block(
                     raise TypeError("if condition must be boolean")
                 result_types = tuple(value.type for value in op.results)
                 _verify_region(
-                    op.then_region,
-                    scope,
-                    (),
-                    result_types,
-                    Yield,
+                    region=op.then_region,
+                    outer_scope=scope,
+                    input_types=(),
+                    output_types=result_types,
+                    terminator=Yield,
                     functions=functions,
                     globals_=globals_,
                 )
                 if op.else_region.blocks or result_types:
                     _verify_region(
-                        op.else_region,
-                        scope,
-                        (),
-                        result_types,
-                        Yield,
+                        region=op.else_region,
+                        outer_scope=scope,
+                        input_types=(),
+                        output_types=result_types,
+                        terminator=Yield,
                         functions=functions,
                         globals_=globals_,
                     )
