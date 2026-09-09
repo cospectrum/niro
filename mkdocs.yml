@@ -16,7 +16,7 @@ nav:
               - builder: niro/ir/builder.md
               - infer: niro/ir/infer.md
               - verifier: niro/ir/verifier.md
-              - operation: niro/ir/operation.md
+              - accessors: niro/ir/accessors.md
               - types: niro/ir/types.md
               - values: niro/ir/values.md
               - program: niro/ir/program.md

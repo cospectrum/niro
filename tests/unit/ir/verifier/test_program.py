@@ -388,7 +388,7 @@ def test_invalid_value_visibility(scenario: str) -> None:
 def test_invalid_references_and_result_types(scenario: str) -> None:
     argument = ir.Value(ir.ValueId(0), ir.ScalarType.I32)
     result = ir.Value(ir.ValueId(1), ir.ScalarType.F32)
-    operations: list[ir.Operation] = []
+    operations: list[ir.Op] = []
     outputs: tuple[ir.Type, ...] = ()
     error: type[Exception] = TypeError
     match scenario:

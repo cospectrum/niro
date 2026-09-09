@@ -1,4 +1,4 @@
-::: niro.ir.operation
+::: niro.ir.accessors
     options:
       filters:
         - "!^_"

@@ -16,9 +16,9 @@ verified_module = module.verify()
 """
 
 from niro.ir import infer
+from niro.ir.accessors import get_operands, get_regions, get_results
 from niro.ir.builder import BlockBuilder, FunctionBuilder, ModuleBuilder
 from niro.ir.data import AttributeName, Attributes, AttributeValue, Literal
-from niro.ir.operation import Operation
 from niro.ir.ops import (
     Add,
     Call,
@@ -32,7 +32,6 @@ from niro.ir.ops import (
     Transpose,
     UnknownOp,
     Yield,
-    as_op,
 )
 from niro.ir.program import (
     Block,
@@ -70,7 +69,6 @@ __all__ = [
     "ModuleBuilder",
     "Mul",
     "Op",
-    "Operation",
     "Region",
     "Return",
     "ScalarType",
@@ -84,7 +82,9 @@ __all__ = [
     "ValueId",
     "VerifiedModule",
     "Yield",
-    "as_op",
+    "get_operands",
+    "get_regions",
+    "get_results",
     "infer",
     "verify",
 ]

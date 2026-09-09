@@ -4,8 +4,8 @@ from niro import ir
 
 
 def _module_for_op(op: ir.Op) -> ir.Module:
-    arguments = op.get_operands()
-    results = op.get_results()
+    arguments = ir.get_operands(op)
+    results = ir.get_results(op)
     return ir.Module(
         functions=[
             ir.Function(

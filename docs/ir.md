@@ -93,7 +93,7 @@ Module
 └── Function
     └── Region
         └── Block
-            └── Operation
+            └── Op (may contain regions)
 ```
 
 ### `Module`
@@ -262,7 +262,19 @@ linkage, visibility, target options, and debug information.
 ## Operations
 
 Niro has a fixed set of known operation kinds. Adding an operation also requires
-supporting its validity rules and lowering behavior.
+supporting its validity rules and lowering behavior. Each operation is a standard
+Python dataclass in the closed `Op` union, with no shared base class. Blocks hold
+`list[Op]`; operations such as `If` contain regions, allowing recursive nesting.
+
+Use `ir.get_operands(op)`, `ir.get_results(op)`, and `ir.get_regions(op)` for
+uniform access across operation kinds. These return tuples of the immediate
+values or regions in their defined order, preserving object identity. Empty
+components return `()`. An `If` exposes its then region followed by its else
+region; accessors do not flatten nested operations.
+
+Constructors check that value IDs and known tensor dimensions are nonnegative;
+their integer types are enforced statically. Other IR invariants are checked by
+`ir.verify`.
 
 ### `Const`
 

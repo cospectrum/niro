@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterator, Mapping
-from typing import assert_never, cast
+from typing import assert_never
 
 from niro import ir
 from niro.ir.ops import (
@@ -81,9 +81,8 @@ def _verify_interface_names(
 def _iter_defined_values(region: Region) -> Iterator[Value]:
     for block in region.blocks:
         yield from block.arguments
-        for operation in block.operations:
-            op = cast(ir.Op, operation)
-            yield from op.get_results()
+        for op in block.operations:
+            yield from ir.get_results(op)
             if isinstance(op, ir.If):
                 yield from _iter_defined_values(op.then_region)
                 yield from _iter_defined_values(op.else_region)
@@ -136,9 +135,8 @@ def _verify_block(
     if not block.operations or not isinstance(block.operations[-1], terminator):
         raise ValueError(f"region must end with {terminator.__name__}")
 
-    for index, operation in enumerate(block.operations):
-        op = cast(ir.Op, operation)
-        for operand in op.get_operands():
+    for index, op in enumerate(block.operations):
+        for operand in ir.get_operands(op):
             if operand.id not in scope:
                 raise ValueError(f"value {operand.id} is not defined in this scope")
             if operand.type != scope[operand.id]:
@@ -200,4 +198,4 @@ def _verify_block(
             case _ as unreachable:
                 assert_never(unreachable)
 
-        scope.update((value.id, value.type) for value in op.get_results())
+        scope.update((value.id, value.type) for value in ir.get_results(op))
