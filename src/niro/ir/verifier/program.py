@@ -21,17 +21,15 @@ from niro.ir.ops import (
     Yield,
 )
 from niro.ir.program import Block, Function, Global, Module, Region, SymbolName
-from niro.ir.types import ScalarType, Type
+from niro.ir.types import Type
 from niro.ir.values import Value, ValueId
+from niro.ir.verifier.ops import _verify_op
 
 __all__ = ["verify"]
 
 
 def verify(module: Module) -> Module:
-    """Check structural and reference invariants and return the same module.
-
-    Operation-specific arithmetic and literal checks are not performed.
-    """
+    """Verify module structure, references, and operations; return the same module."""
     _verify_symbol_names(module)
     functions = {function.name: function for function in module.functions}
     globals_ = {global_.name: global_ for global_ in module.globals}
@@ -54,6 +52,8 @@ def _verify_function(
     functions: Mapping[SymbolName, Function],
     globals_: Mapping[SymbolName, Global],
 ) -> None:
+    _verify_interface_names("input", function.input_names, len(function.type.inputs))
+    _verify_interface_names("output", function.output_names, len(function.type.outputs))
     if function.body is None:
         return
     _verify_value_ids(function.body)
@@ -66,6 +66,17 @@ def _verify_function(
         functions=functions,
         globals_=globals_,
     )
+
+
+def _verify_interface_names(
+    kind: str, names: tuple[str | None, ...] | None, arity: int
+) -> None:
+    if names is None:
+        return
+    if len(names) != arity:
+        raise ValueError(f"{kind} names must match {kind} arity")
+    if any(name == "" for name in names):
+        raise ValueError(f"{kind} names cannot be empty")
 
 
 def _iter_defined_values(region: Region) -> Iterator[Value]:
@@ -134,6 +145,7 @@ def _verify_block(
             if operand.type != scope[operand.id]:
                 raise TypeError(f"value {operand.id} type differs from its definition")
 
+        _verify_op(op)
         match op:
             case Return() | Yield():
                 if index != len(block.operations) - 1 or not isinstance(op, terminator):
@@ -157,8 +169,6 @@ def _verify_block(
                 if op.result.type != global_.type:
                     raise TypeError("global load type does not match global type")
             case If():
-                if op.condition.type is not ScalarType.BOOL:
-                    raise TypeError("if condition must be boolean")
                 result_types = tuple(value.type for value in op.results)
                 _verify_region(
                     region=op.then_region,
