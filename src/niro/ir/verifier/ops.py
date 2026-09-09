@@ -5,45 +5,36 @@ from __future__ import annotations
 import math
 from typing import assert_never
 
-from niro.ir.infer import matmul_result_type, transpose_result_type
+from niro import ir
 from niro.ir.ops import (
     Add,
-    Call,
     Const,
-    GetGlobal,
-    If,
-    MatMul,
     Mul,
     Op,
-    Return,
-    Transpose,
-    UnknownOp,
-    Yield,
 )
-from niro.ir.types import ScalarType, TensorType
 
 
 def _verify_op(op: Op) -> None:
     match op:
-        case Const():
+        case ir.Const():
             _verify_const(op)
-        case Add() | Mul():
+        case ir.Add() | ir.Mul():
             _verify_numeric_binary(op)
-        case MatMul():
-            expected = matmul_result_type(op.lhs.type, op.rhs.type)
+        case ir.MatMul():
+            expected = ir.infer.matmul_result_type(op.lhs.type, op.rhs.type)
             if op.result.type != expected:
                 raise TypeError("matmul result type does not match its operands")
-        case Transpose():
-            expected = transpose_result_type(op.operand.type, op.permutation)
+        case ir.Transpose():
+            expected = ir.infer.transpose_result_type(op.operand.type, op.permutation)
             if op.result.type != expected:
                 raise TypeError("transpose result type does not match its operands")
-        case If():
-            if op.condition.type is not ScalarType.BOOL:
+        case ir.If():
+            if op.condition.type is not ir.ScalarType.BOOL:
                 raise TypeError("if condition must be boolean")
-        case UnknownOp():
+        case ir.UnknownOp():
             if not op.name:
                 raise ValueError("UnknownOp name cannot be empty")
-        case Call() | GetGlobal() | Return() | Yield():
+        case ir.Call() | ir.GetGlobal() | ir.Return() | ir.Yield():
             pass
         case _ as unreachable:
             assert_never(unreachable)
@@ -51,15 +42,15 @@ def _verify_op(op: Op) -> None:
 
 def _verify_const(op: Const) -> None:
     match op.result.type:
-        case ScalarType.BOOL if isinstance(op.literal, bool):
+        case ir.ScalarType.BOOL if isinstance(op.literal, bool):
             pass
-        case ScalarType.I32 | ScalarType.I64 if isinstance(
+        case ir.ScalarType.I32 | ir.ScalarType.I64 if isinstance(
             op.literal, int
         ) and not isinstance(op.literal, bool):
             pass
-        case ScalarType.F32 | ScalarType.F64 if isinstance(op.literal, float):
+        case ir.ScalarType.F32 | ir.ScalarType.F64 if isinstance(op.literal, float):
             pass
-        case TensorType(element_type, shape) if (
+        case ir.TensorType(element_type, shape) if (
             isinstance(op.literal, bytes)
             and shape is not None
             and all(dimension is not None for dimension in shape)
@@ -70,18 +61,20 @@ def _verify_const(op: Const) -> None:
                 raise ValueError(
                     f"tensor constant has {len(op.literal)} bytes, expected {expected}"
                 )
-        case TensorType():
+        case ir.TensorType():
             raise TypeError("tensor constant requires packed bytes and a static shape")
         case _:
             raise TypeError("constant value does not match its result type")
 
 
 def _verify_numeric_binary(op: Add | Mul) -> None:
-    name = "add" if isinstance(op, Add) else "mul"
+    name = "add" if isinstance(op, ir.Add) else "mul"
     if op.lhs.type != op.rhs.type or op.result.type != op.lhs.type:
         raise TypeError(f"{name} operands and result must have the same type")
     element_type = (
-        op.lhs.type.element_type if isinstance(op.lhs.type, TensorType) else op.lhs.type
+        op.lhs.type.element_type
+        if isinstance(op.lhs.type, ir.TensorType)
+        else op.lhs.type
     )
-    if element_type is ScalarType.BOOL:
+    if element_type is ir.ScalarType.BOOL:
         raise TypeError(f"{name} does not support boolean values")

@@ -8,9 +8,11 @@ from typing import Annotated
 import typer
 from google.protobuf.message import DecodeError
 
+import niro.onnx
 from niro import ir
-from niro.cli.input import InputFormat, load_model, resolve_input_format
-from niro.onnx import inspect_signature as inspect_onnx_signature
+from niro.cli import input as cli_input
+from niro.cli.input import InputFormat
+from niro.ir import Function
 
 LINE_WIDTH = 100
 
@@ -30,16 +32,16 @@ def inspect_signature(
     ] = None,
 ) -> None:
     """Print the model entry-point signature."""
-    resolved_format = resolve_input_format(input_path, input_format)
+    resolved_format = cli_input.resolve_input_format(input_path, input_format)
     try:
-        model = load_model(input_path, resolved_format)
-        typer.echo(format_signature(inspect_onnx_signature(model)))
+        model = cli_input.load_model(input_path, resolved_format)
+        typer.echo(format_signature(niro.onnx.inspect_signature(model)))
     except (DecodeError, OSError, TypeError, ValueError, NotImplementedError) as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(code=1) from error
 
 
-def format_signature(function: ir.Function) -> str:
+def format_signature(function: Function) -> str:
     """Format a public function interface with a 100-column target."""
     inputs = _items(function.type.inputs, function.input_names)
     outputs = _items(function.type.outputs, function.output_names)

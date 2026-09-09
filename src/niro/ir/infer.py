@@ -1,5 +1,6 @@
 """Infer operation result types from operand types and operation parameters."""
 
+from niro import ir
 from niro.ir.types import TensorType, Type
 
 
@@ -7,13 +8,13 @@ def transpose_result_type(
     operand_type: Type, permutation: tuple[int, ...]
 ) -> TensorType:
     """Infer the tensor type after permuting axes, preserving unknown rank."""
-    if not isinstance(operand_type, TensorType):
+    if not isinstance(operand_type, ir.TensorType):
         raise TypeError("transpose operand must be a tensor")
     if operand_type.shape is None:
         return operand_type
     if sorted(permutation) != list(range(len(operand_type.shape))):
         raise ValueError("transpose permutation must contain every dimension once")
-    return TensorType(
+    return ir.TensorType(
         operand_type.element_type,
         tuple(operand_type.shape[index] for index in permutation),
     )
@@ -25,7 +26,7 @@ def matmul_result_type(lhs: Type, rhs: Type) -> TensorType:
     Operand element types and known contracting dimensions must match.
     Unknown dimensions are preserved in the result shape.
     """
-    if not isinstance(lhs, TensorType) or not isinstance(rhs, TensorType):
+    if not isinstance(lhs, ir.TensorType) or not isinstance(rhs, ir.TensorType):
         raise TypeError("matmul operands must be tensors")
     if lhs.shape is None or rhs.shape is None:
         raise TypeError("matmul operands must be ranked tensors")
@@ -36,4 +37,4 @@ def matmul_result_type(lhs: Type, rhs: Type) -> TensorType:
     lhs_inner, rhs_inner = lhs.shape[1], rhs.shape[0]
     if lhs_inner is not None and rhs_inner is not None and lhs_inner != rhs_inner:
         raise ValueError("matmul contracting dimensions must match")
-    return TensorType(lhs.element_type, (lhs.shape[0], rhs.shape[1]))
+    return ir.TensorType(lhs.element_type, (lhs.shape[0], rhs.shape[1]))

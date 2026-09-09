@@ -14,11 +14,12 @@ from xdsl.dialects.linalg import ops as linalg
 from xdsl.ir import Attribute, Block, Operation, Region, SSAValue
 
 from niro import ir
+from niro.ir import VerifiedModule
 
 ValueTable = dict[ir.ValueId, SSAValue]
 
 
-def to_mlir(niro_module: ir.VerifiedModule) -> builtin.ModuleOp:
+def to_mlir(niro_module: VerifiedModule) -> builtin.ModuleOp:
     """Convert verified Niro IR to a verified, high-level MLIR module."""
     lowered_functions = [
         _lower_function(function) for function in niro_module.functions

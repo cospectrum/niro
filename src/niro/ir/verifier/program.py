@@ -6,18 +6,9 @@ from collections import Counter
 from collections.abc import Iterator, Mapping
 from typing import assert_never, cast
 
+from niro import ir
 from niro.ir.ops import (
-    Add,
-    Call,
-    Const,
-    GetGlobal,
-    If,
-    MatMul,
-    Mul,
-    Op,
     Return,
-    Transpose,
-    UnknownOp,
     Yield,
 )
 from niro.ir.program import (
@@ -31,7 +22,7 @@ from niro.ir.program import (
 )
 from niro.ir.types import Type
 from niro.ir.values import Value, ValueId
-from niro.ir.verifier.ops import _verify_op
+from niro.ir.verifier import ops as op_verifier
 
 __all__ = ["verify"]
 
@@ -43,7 +34,7 @@ def verify(module: Module) -> VerifiedModule:
     globals_ = {global_.name: global_ for global_ in module.globals}
     for function in module.functions:
         _verify_function(function, functions, globals_)
-    return VerifiedModule(module)
+    return ir.VerifiedModule(module)
 
 
 def _verify_symbol_names(module: Module) -> None:
@@ -70,7 +61,7 @@ def _verify_function(
         outer_scope={},
         input_types=function.type.inputs,
         output_types=function.type.outputs,
-        terminator=Return,
+        terminator=ir.Return,
         functions=functions,
         globals_=globals_,
     )
@@ -91,9 +82,9 @@ def _iter_defined_values(region: Region) -> Iterator[Value]:
     for block in region.blocks:
         yield from block.arguments
         for operation in block.operations:
-            op = cast(Op, operation)
+            op = cast(ir.Op, operation)
             yield from op.get_results()
-            if isinstance(op, If):
+            if isinstance(op, ir.If):
                 yield from _iter_defined_values(op.then_region)
                 yield from _iter_defined_values(op.else_region)
 
@@ -117,7 +108,7 @@ def _verify_region(
 ) -> None:
     if not region.blocks:
         raise ValueError("region must contain a block")
-    if terminator is Yield and len(region.blocks) != 1:
+    if terminator is ir.Yield and len(region.blocks) != 1:
         raise ValueError("if region must contain exactly one block")
     if tuple(value.type for value in region.blocks[0].arguments) != input_types:
         raise TypeError("region argument types do not match expected input types")
@@ -146,23 +137,23 @@ def _verify_block(
         raise ValueError(f"region must end with {terminator.__name__}")
 
     for index, operation in enumerate(block.operations):
-        op = cast(Op, operation)
+        op = cast(ir.Op, operation)
         for operand in op.get_operands():
             if operand.id not in scope:
                 raise ValueError(f"value {operand.id} is not defined in this scope")
             if operand.type != scope[operand.id]:
                 raise TypeError(f"value {operand.id} type differs from its definition")
 
-        _verify_op(op)
+        op_verifier._verify_op(op)
         match op:
-            case Return() | Yield():
+            case ir.Return() | ir.Yield():
                 if index != len(block.operations) - 1 or not isinstance(op, terminator):
                     raise ValueError("unexpected block terminator")
                 if tuple(value.type for value in op.operands) != output_types:
                     raise TypeError(
                         "terminator operand types do not match region results"
                     )
-            case Call():
+            case ir.Call():
                 function = functions.get(op.callee)
                 if function is None:
                     raise ValueError(f"unknown function: {op.callee!r}")
@@ -170,20 +161,20 @@ def _verify_block(
                     raise TypeError("call argument types do not match function inputs")
                 if tuple(value.type for value in op.results) != function.type.outputs:
                     raise TypeError("call result types do not match function outputs")
-            case GetGlobal():
+            case ir.GetGlobal():
                 global_ = globals_.get(op.name)
                 if global_ is None:
                     raise ValueError(f"unknown global: {op.name!r}")
                 if op.result.type != global_.type:
                     raise TypeError("global load type does not match global type")
-            case If():
+            case ir.If():
                 result_types = tuple(value.type for value in op.results)
                 _verify_region(
                     region=op.then_region,
                     outer_scope=scope,
                     input_types=(),
                     output_types=result_types,
-                    terminator=Yield,
+                    terminator=ir.Yield,
                     functions=functions,
                     globals_=globals_,
                 )
@@ -193,12 +184,19 @@ def _verify_block(
                         outer_scope=scope,
                         input_types=(),
                         output_types=result_types,
-                        terminator=Yield,
+                        terminator=ir.Yield,
                         functions=functions,
                         globals_=globals_,
                     )
 
-            case Const() | Add() | Mul() | MatMul() | Transpose() | UnknownOp():
+            case (
+                ir.Const()
+                | ir.Add()
+                | ir.Mul()
+                | ir.MatMul()
+                | ir.Transpose()
+                | ir.UnknownOp()
+            ):
                 pass
             case _ as unreachable:
                 assert_never(unreachable)

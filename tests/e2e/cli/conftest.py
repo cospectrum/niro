@@ -4,17 +4,16 @@ from typing import Literal
 import onnx
 import pytest
 
-from .onnx_models import ModelCase, onnx_model_cases
-from .support import InstalledCli, install_cli
+from . import onnx_models, support
 
-_ONNX_MODEL_CASES = onnx_model_cases()
+_ONNX_MODEL_CASES = onnx_models.onnx_model_cases()
 
 
 @pytest.fixture(scope="session")
-def installed_cli(tmp_path_factory: pytest.TempPathFactory) -> InstalledCli:
+def installed_cli(tmp_path_factory: pytest.TempPathFactory) -> support.InstalledCli:
     project_root = Path(__file__).parents[3]
     root = tmp_path_factory.mktemp("installed-cli")
-    return install_cli(project_root, root)
+    return support.install_cli(project_root, root)
 
 
 @pytest.fixture(
@@ -22,15 +21,15 @@ def installed_cli(tmp_path_factory: pytest.TempPathFactory) -> InstalledCli:
     params=_ONNX_MODEL_CASES,
     ids=tuple(case.name for case in _ONNX_MODEL_CASES),
 )
-def onnx_model(request: pytest.FixtureRequest) -> ModelCase:
-    assert isinstance(request.param, ModelCase)
+def onnx_model(request: pytest.FixtureRequest) -> onnx_models.ModelCase:
+    assert isinstance(request.param, onnx_models.ModelCase)
     return request.param
 
 
 @pytest.fixture(params=("path", "stdin"))
 def model_input(
     request: pytest.FixtureRequest,
-    onnx_model: ModelCase,
+    onnx_model: onnx_models.ModelCase,
     tmp_path: Path,
 ) -> tuple[tuple[str | Path, ...], bytes | None]:
     input_kind = request.param

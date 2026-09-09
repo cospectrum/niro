@@ -3,12 +3,11 @@
 import onnx
 
 from niro import ir
-from niro.ir import ModuleBuilder
+from niro.ir import Function
+from niro.onnx import _from_onnx
 
-from ._from_onnx import _declare_entry_point
 
-
-def inspect_signature(model: onnx.ModelProto) -> ir.Function:
+def inspect_signature(model: onnx.ModelProto) -> Function:
     """Return the model's entry-point signature as a function declaration."""
-    module = ModuleBuilder()
-    return _declare_entry_point(model.graph, module).raw
+    module = ir.ModuleBuilder()
+    return _from_onnx._declare_entry_point(model.graph, module).raw

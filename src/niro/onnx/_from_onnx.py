@@ -4,11 +4,12 @@ from typing import cast
 
 import onnx
 
+import niro.onnx
 from niro import ir
-from niro.ir import BlockBuilder, FunctionBuilder, ModuleBuilder
+from niro.ir import BlockBuilder, FunctionBuilder, ModuleBuilder, VerifiedModule
+from niro.onnx import value_table as onnx_values
 
-from .op_type import OnnxOpType
-from .value_table import OnnxValueName, OnnxValueTable
+from .value_table import OnnxValueName
 
 _ONNX_DOMAINS = (
     "",
@@ -25,10 +26,10 @@ class Ctx:
     types: Mapping[OnnxValueName, ir.Type]
 
 
-def from_onnx(onnx_model: onnx.ModelProto) -> ir.VerifiedModule:
+def from_onnx(onnx_model: onnx.ModelProto) -> VerifiedModule:
     """Convert an ONNX model to verified Niro IR."""
     graph = onnx_model.graph
-    module = ModuleBuilder()
+    module = ir.ModuleBuilder()
     weights = _import_initializers(graph, module)
     ctx = Ctx(
         graph=graph,
@@ -55,7 +56,7 @@ def _import_forward(ctx: Ctx, module: ModuleBuilder) -> ir.Function:
 
     block = fn.region().first_block()
 
-    value_table = OnnxValueTable()
+    value_table = onnx_values.OnnxValueTable()
     value_table.define_many(
         (cast(str, name) for name in input_names),
         block.raw.arguments,
@@ -118,16 +119,16 @@ def _import_node(
         return _import_unknown_node(ctx, block, node, operands)
 
     match node.op_type:
-        case OnnxOpType.Add:
+        case niro.onnx.OnnxOpType.Add:
             lhs, rhs = operands
             return block.add(lhs, rhs)
-        case OnnxOpType.Mul:
+        case niro.onnx.OnnxOpType.Mul:
             lhs, rhs = operands
             return block.mul(lhs, rhs)
-        case OnnxOpType.MatMul:
+        case niro.onnx.OnnxOpType.MatMul:
             lhs, rhs = operands
             return block.matmul(lhs, rhs)
-        case OnnxOpType.Transpose:
+        case niro.onnx.OnnxOpType.Transpose:
             return _import_transpose(block, node, operands)
         case _:
             return _import_unknown_node(ctx, block, node, operands)

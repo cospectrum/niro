@@ -9,9 +9,9 @@ from typing import Annotated
 import typer
 from google.protobuf.message import DecodeError
 
-from niro.cli.input import InputFormat, load_model, resolve_input_format
-from niro.mlir import to_mlir, write_mlir
-from niro.onnx import from_onnx
+import niro
+from niro.cli import input as cli_input
+from niro.cli.input import InputFormat
 
 
 def emit_mlir(
@@ -41,16 +41,16 @@ def emit_mlir(
     ] = None,
 ) -> None:
     """Emit textual MLIR for a model."""
-    resolved_format = resolve_input_format(input_path, input_format)
+    resolved_format = cli_input.resolve_input_format(input_path, input_format)
     try:
-        model = load_model(input_path, resolved_format)
-        lowered = to_mlir(from_onnx(model))
+        model = cli_input.load_model(input_path, resolved_format)
+        lowered = niro.to_mlir(niro.from_onnx(model))
         destination = (
             sys.stdout
             if output_path is None or output_path == Path("-")
             else output_path
         )
-        write_mlir(lowered, destination)
+        niro.write_mlir(lowered, destination)
     except (DecodeError, OSError, TypeError, ValueError, NotImplementedError) as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(code=1) from error

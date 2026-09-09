@@ -3,11 +3,10 @@ from typing import assert_type
 import pytest
 
 from niro import ir
-from niro.ir import FunctionBuilder, ModuleBuilder
 
 
-def function_builder() -> FunctionBuilder:
-    return ModuleBuilder().function(
+def function_builder() -> ir.FunctionBuilder:
+    return ir.ModuleBuilder().function(
         name="main",
         type=ir.FunctionType((), ()),
     )
@@ -23,7 +22,7 @@ def test_appends_multiple_blocks_in_region() -> None:
 
 
 def test_function_first_block_arguments_match_function_inputs() -> None:
-    function = ModuleBuilder().function(
+    function = ir.ModuleBuilder().function(
         name="main",
         type=ir.FunctionType((ir.ScalarType.F32, ir.ScalarType.I64), ()),
     )
@@ -37,7 +36,7 @@ def test_function_first_block_arguments_match_function_inputs() -> None:
 
 
 def test_function_block_accepts_explicit_argument_types() -> None:
-    function = ModuleBuilder().function(
+    function = ir.ModuleBuilder().function(
         name="main",
         type=ir.FunctionType((ir.ScalarType.F32,), ()),
     )
@@ -48,7 +47,7 @@ def test_function_block_accepts_explicit_argument_types() -> None:
 
 
 def test_nested_region_block_has_no_function_arguments() -> None:
-    function = ModuleBuilder().function(
+    function = ir.ModuleBuilder().function(
         name="main",
         type=ir.FunctionType((ir.ScalarType.F32,), ()),
     )
@@ -73,7 +72,7 @@ def test_appends_operation_after_terminator() -> None:
 
 def test_call_to_undeclared_function_builder_with_explicit_empty_results() -> None:
     caller = function_builder().region().block()
-    callee = ModuleBuilder().function(name="callee", type=ir.FunctionType((), ()))
+    callee = ir.ModuleBuilder().function(name="callee", type=ir.FunctionType((), ()))
 
     results = caller.call(callee, result_types=())
 
@@ -125,7 +124,7 @@ def test_matmul() -> None:
 
 
 def test_call() -> None:
-    module = ModuleBuilder()
+    module = ir.ModuleBuilder()
     callee = module.function(name="callee", type=ir.FunctionType((), ()))
     caller = module.function(name="caller", type=ir.FunctionType((), ()))
     block = caller.region().block()
@@ -169,7 +168,7 @@ def test_unknown_op() -> None:
 
 
 def test_get_global() -> None:
-    module = ModuleBuilder()
+    module = ir.ModuleBuilder()
     global_ = module.global_("answer", ir.ScalarType.I32, 42)
     function = module.function(name="main", type=ir.FunctionType((), ()))
     block = function.region().block()
@@ -181,7 +180,7 @@ def test_get_global() -> None:
 
 
 def test_allows_duplicate_symbols_during_construction() -> None:
-    module = ModuleBuilder()
+    module = ir.ModuleBuilder()
     first_global = module.global_("main", ir.ScalarType.I32, 42)
     first_function = module.function(name="main", type=ir.FunctionType((), ()))
     second_global = module.global_("main", ir.ScalarType.I64, 43)
@@ -192,7 +191,7 @@ def test_allows_duplicate_symbols_during_construction() -> None:
 
 
 def test_call_infers_results_without_checking_arguments() -> None:
-    module = ModuleBuilder()
+    module = ir.ModuleBuilder()
     callee = module.function(
         name="callee", type=ir.FunctionType((ir.ScalarType.I32,), (ir.ScalarType.F32,))
     )
@@ -210,7 +209,7 @@ def test_call_infers_results_without_checking_arguments() -> None:
 
 
 def test_call_forward_reference() -> None:
-    module = ModuleBuilder()
+    module = ir.ModuleBuilder()
     block = module.function(name="main", type=ir.FunctionType((), ())).region().block()
     results = block.call("later", result_types=[ir.ScalarType.I32])
     operation = block.raw.operations[-1]
@@ -222,7 +221,7 @@ def test_call_forward_reference() -> None:
 
 
 def test_get_global_forward_reference() -> None:
-    module = ModuleBuilder()
+    module = ir.ModuleBuilder()
     block = module.function(name="main", type=ir.FunctionType((), ())).region().block()
     result = block.get_global("later", type=ir.ScalarType.I32)
     operation = block.raw.operations[-1]
@@ -248,7 +247,7 @@ def test_unresolved_object_targets_use_explicit_types() -> None:
 
 
 def test_resolution_uses_first_matching_module_declaration() -> None:
-    module = ModuleBuilder()
+    module = ir.ModuleBuilder()
     module.function(name="callee", type=ir.FunctionType((), (ir.ScalarType.I32,)))
     duplicate = module.function(
         name="callee", type=ir.FunctionType((), (ir.ScalarType.F32,))
@@ -262,7 +261,7 @@ def test_resolution_uses_first_matching_module_declaration() -> None:
 
 
 def test_verify_returns_raw_module_with_verified_type() -> None:
-    module = ModuleBuilder()
+    module = ir.ModuleBuilder()
     block = module.function(name="main", type=ir.FunctionType((), ())).region().block()
     block.return_()
 
@@ -273,7 +272,7 @@ def test_verify_returns_raw_module_with_verified_type() -> None:
 
 
 def test_verify_checks_current_builder_contents() -> None:
-    module = ModuleBuilder()
+    module = ir.ModuleBuilder()
     block = module.function(name="main", type=ir.FunctionType((), ())).region().block()
     block.return_()
     module.verify()
