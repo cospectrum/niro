@@ -1,10 +1,10 @@
 """Verification of completed Niro IR modules.
 
-`verify.module(module)` returns an `ir.VerifiedModule`, the input type required by
-`niro.to_mlir`. `ModuleBuilder.verify()` provides the same check for a builder,
-and `niro.from_onnx` verifies its result automatically.
+[`verify.module`][niro.verify.module] checks a module's structure, references, and
+operations, returning the same module marked as
+[`VerifiedModule`][niro.ir.VerifiedModule].
 
-The returned object is the original module. Verify it again after making changes.
+Verify it again after making changes.
 """
 
 from niro.verify.program import module
