@@ -1,5 +1,3 @@
-import pytest
-
 from niro import ir
 from niro.ir import FunctionBuilder, ModuleBuilder
 
@@ -11,12 +9,13 @@ def function_builder() -> FunctionBuilder:
     )
 
 
-def test_rejects_second_block_in_region() -> None:
+def test_appends_multiple_blocks_in_region() -> None:
     region = function_builder().region()
-    region.block()
+    first = region.block()
+    second = region.block((ir.ScalarType.I32,))
 
-    with pytest.raises(ValueError, match="multiple blocks"):
-        region.block()
+    assert region.raw.blocks == [first.raw, second.raw]
+    assert second.raw.arguments[0].type is ir.ScalarType.I32
 
 
 def test_function_first_block_arguments_match_function_inputs() -> None:
@@ -33,14 +32,15 @@ def test_function_first_block_arguments_match_function_inputs() -> None:
     )
 
 
-def test_function_block_rejects_arguments_that_do_not_match_inputs() -> None:
+def test_function_block_accepts_explicit_argument_types() -> None:
     function = ModuleBuilder().function(
         name="main",
         type=ir.FunctionType((ir.ScalarType.F32,), ()),
     )
 
-    with pytest.raises(TypeError, match="must match function input types"):
-        function.region().block((ir.ScalarType.I64,))
+    block = function.region().block((ir.ScalarType.I64,))
+
+    assert block.raw.arguments[0].type is ir.ScalarType.I64
 
 
 def test_nested_region_first_block_has_no_function_arguments() -> None:
@@ -58,22 +58,23 @@ def test_nested_region_first_block_has_no_function_arguments() -> None:
     assert else_block.raw.arguments == ()
 
 
-def test_rejects_operation_after_terminator() -> None:
+def test_appends_operation_after_terminator() -> None:
     block = function_builder().region().block()
     block.return_()
 
-    with pytest.raises(ValueError, match="after a block terminator"):
-        block.i32(1)
+    result = block.i32(1)
 
-    assert block.raw.operations == [ir.Return()]
+    assert block.raw.operations == [ir.Return(), ir.Const(result, 1)]
 
 
-def test_rejects_call_to_unknown_function_name() -> None:
+def test_call_to_undeclared_function_builder_with_explicit_empty_results() -> None:
     caller = function_builder().region().block()
     callee = ModuleBuilder().function(name="callee", type=ir.FunctionType((), ()))
 
-    with pytest.raises(ValueError, match="unknown function"):
-        caller.call(callee)
+    results = caller.call(callee, result_types=())
+
+    assert results == ()
+    assert caller.raw.operations == [ir.Call("callee", (), ())]
 
 
 def test_const() -> None:
@@ -175,9 +176,82 @@ def test_get_global() -> None:
     assert block.raw.operations == [ir.GetGlobal("answer", result)]
 
 
-def test_global_and_function_names_share_namespace() -> None:
+def test_allows_duplicate_symbols_during_construction() -> None:
     module = ModuleBuilder()
-    module.global_("main", ir.ScalarType.I32, 42)
+    first_global = module.global_("main", ir.ScalarType.I32, 42)
+    first_function = module.function(name="main", type=ir.FunctionType((), ()))
+    second_global = module.global_("main", ir.ScalarType.I64, 43)
+    second_function = module.function(name="main", type=ir.FunctionType((), ()))
 
-    with pytest.raises(ValueError, match="symbol names must be unique"):
-        module.function(name="main", type=ir.FunctionType((), ()))
+    assert module.raw.globals == [first_global, second_global]
+    assert module.raw.functions == [first_function.raw, second_function.raw]
+
+
+def test_call_infers_results_without_checking_arguments() -> None:
+    module = ModuleBuilder()
+    callee = module.function(
+        name="callee", type=ir.FunctionType((ir.ScalarType.I32,), (ir.ScalarType.F32,))
+    )
+    block = module.function(name="main", type=ir.FunctionType((), ())).region().block()
+    argument = block.bool(True)
+
+    for target in (callee, callee.raw, "callee"):
+        results = block.call(target, (argument, argument))
+        assert tuple(value.type for value in results) == (ir.ScalarType.F32,)
+        assert block.raw.operations[-1] == ir.Call(
+            "callee", (argument, argument), results
+        )
+    explicit = block.call(callee, result_types=[ir.ScalarType.F32])
+    assert explicit[0].type is ir.ScalarType.F32
+
+
+def test_call_forward_reference() -> None:
+    module = ModuleBuilder()
+    block = module.function(name="main", type=ir.FunctionType((), ())).region().block()
+    results = block.call("later", result_types=[ir.ScalarType.I32])
+    operation = block.raw.operations[-1]
+    module.function(name="later", type=ir.FunctionType((), (ir.ScalarType.I32,)))
+
+    assert results[0].type is ir.ScalarType.I32
+    assert block.raw.operations[-1] is operation
+    assert operation == ir.Call("later", (), results)
+
+
+def test_get_global_forward_reference() -> None:
+    module = ModuleBuilder()
+    block = module.function(name="main", type=ir.FunctionType((), ())).region().block()
+    result = block.get_global("later", type=ir.ScalarType.I32)
+    operation = block.raw.operations[-1]
+    global_ = module.global_("later", ir.ScalarType.I32, 42)
+
+    assert result.type is ir.ScalarType.I32
+    assert block.raw.operations[-1] is operation
+    assert operation == ir.GetGlobal("later", result)
+    assert block.get_global(global_, type=ir.ScalarType.I32).type is ir.ScalarType.I32
+    assert block.get_global("later").type is ir.ScalarType.I32
+
+
+def test_unresolved_object_targets_use_explicit_types() -> None:
+    block = function_builder().region().block()
+    function = ir.Function("later", ir.FunctionType((), (ir.ScalarType.F32,)))
+    global_ = ir.Global("weight", ir.ScalarType.F32, 1.0)
+
+    results = block.call(function, result_types=(ir.ScalarType.I32,))
+    result = block.get_global(global_, type=ir.ScalarType.I32)
+
+    assert results[0].type is ir.ScalarType.I32
+    assert result.type is ir.ScalarType.I32
+
+
+def test_resolution_uses_first_matching_module_declaration() -> None:
+    module = ModuleBuilder()
+    module.function(name="callee", type=ir.FunctionType((), (ir.ScalarType.I32,)))
+    duplicate = module.function(
+        name="callee", type=ir.FunctionType((), (ir.ScalarType.F32,))
+    )
+    module.global_("weight", ir.ScalarType.I32, 1)
+    duplicate_global = module.global_("weight", ir.ScalarType.F32, 1.0)
+    block = module.function(name="main", type=ir.FunctionType((), ())).region().block()
+
+    assert block.call(duplicate)[0].type is ir.ScalarType.I32
+    assert block.get_global(duplicate_global).type is ir.ScalarType.I32

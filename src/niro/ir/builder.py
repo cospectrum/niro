@@ -37,9 +37,6 @@ from niro.ir.program import (
 from niro.ir.types import ScalarType, TensorType, Type
 from niro.ir.values import Value, ValueId
 
-type CallTarget = FunctionBuilder | Function | SymbolName
-GlobalTarget = Global | SymbolName
-
 
 class Builder[T]:
     """Base class for builders of a single IR object.
@@ -55,23 +52,17 @@ class ModuleCtx:
     def __init__(self, module: Module) -> None:
         self._module = module
 
-    def resolve_function(self, target: CallTarget) -> Function:
-        name = (
-            target.raw.name
-            if isinstance(target, FunctionBuilder)
-            else (target.name if isinstance(target, Function) else target)
-        )
+    def resolve_function(self, name: SymbolName) -> Function | None:
         for function in self._module.functions:
             if function.name == name:
                 return function
-        raise ValueError(f"unknown function: {name!r}")
+        return None
 
-    def resolve_global(self, target: GlobalTarget) -> Global:
-        name = target.name if isinstance(target, Global) else target
+    def resolve_global(self, name: SymbolName) -> Global | None:
         for global_ in self._module.globals:
             if global_.name == name:
                 return global_
-        raise ValueError(f"unknown global: {name!r}")
+        return None
 
 
 class FunctionCtx(ModuleCtx):
@@ -103,7 +94,6 @@ class ModuleBuilder(Builder[Module]):
         attributes: Mapping[AttributeName, AttributeValue] | None = None,
     ) -> FunctionBuilder:
         """Declare a function and return its builder."""
-        self._require_available_symbol(name)
         fn = Function(
             name=name,
             type=type,
@@ -116,15 +106,9 @@ class ModuleBuilder(Builder[Module]):
 
     def global_(self, name: SymbolName, type: Type, initializer: Literal) -> Global:
         """Declare and return an initialized global."""
-        self._require_available_symbol(name)
         global_ = Global(name, type, initializer)
         self.raw.globals.append(global_)
         return global_
-
-    def _require_available_symbol(self, name: SymbolName) -> None:
-        names = {item.name for item in [*self.raw.globals, *self.raw.functions]}
-        if name in names:
-            raise ValueError("module symbol names must be unique")
 
 
 class FunctionBuilder(Builder[Function]):
@@ -171,12 +155,6 @@ class RegionBuilder(Builder[Region]):
 
     def block(self, arg_types: Sequence[Type] = ()) -> BlockBuilder:
         """Append a block with arguments of the given types."""
-        if self.raw.blocks:
-            raise ValueError("multiple blocks per region are not supported")
-        if self._is_function_body and tuple(arg_types) != self._function_input_types:
-            raise TypeError(
-                "entry block argument types must match function input types"
-            )
         args = tuple(self._ctx.new_value(type) for type in arg_types)
         block = Block(arguments=args)
         builder = BlockBuilder(self._ctx, block)
@@ -212,8 +190,6 @@ class BlockBuilder(Builder[Block]):
         result_types: Sequence[Type],
         create_op: Callable[[tuple[Value, ...]], OpT],
     ) -> OpT:
-        if self.raw.operations and self.raw.operations[-1].is_terminator():
-            raise ValueError("cannot append an operation after a block terminator")
         results = tuple(self._ctx.new_value(type) for type in result_types)
         op = create_op(results)
         self.raw.operations.append(op)
@@ -229,15 +205,30 @@ class BlockBuilder(Builder[Block]):
         op = self._append_operation([type], create)
         return op.result
 
-    def get_global(self, global_: GlobalTarget) -> Value:
-        """Append a global load and return its result."""
-        resolved = self._ctx.resolve_global(global_)
+    def get_global(
+        self, global_: Global | SymbolName, *, type: Type | None = None
+    ) -> Value:
+        """Append a global load, inferring its type from the module when possible.
+
+        Supply ``type`` for an undeclared global. If declared, an explicit type
+        must match the declaration.
+        """
+        name = global_.name if isinstance(global_, Global) else global_
+        resolved = self._ctx.resolve_global(name)
+        if type is None:
+            type = resolved.type if resolved is not None else None
+
+        if resolved and type != resolved.type:
+            raise TypeError("global result type does not match its declaration")
+
+        if type is None:
+            raise ValueError(f"type is required for unknown global: {name!r}")
 
         def create(results: tuple[Value, ...]) -> GetGlobal:
             (result,) = results
-            return GetGlobal(name=resolved.name, result=result)
+            return GetGlobal(name=name, result=result)
 
-        op = self._append_operation([resolved.type], create)
+        op = self._append_operation([type], create)
         return op.result
 
     def bool(self, value: builtins.bool) -> Value:
@@ -358,33 +349,47 @@ class BlockBuilder(Builder[Block]):
 
     def call(
         self,
-        callee: CallTarget,
+        callee: FunctionBuilder | Function | SymbolName,
         arguments: Sequence[Value] = (),
+        *,
+        result_types: Sequence[Type] | None = None,
     ) -> tuple[Value, ...]:
-        """Append a function call and return its results."""
-        function = self._ctx.resolve_function(callee)
-        actual_types = tuple(argument.type for argument in arguments)
-        if actual_types != function.type.inputs:
-            raise TypeError(
-                f"call argument types {actual_types!r} do not match "
-                f"{function.type.inputs!r}"
+        """Append a call, inferring result types from the module when possible.
+
+        Supply ``result_types`` for an undeclared function, including ``()`` for
+        no results. If declared, explicit types must match its output types.
+        """
+        name = (
+            callee.raw.name
+            if isinstance(callee, FunctionBuilder)
+            else (callee.name if isinstance(callee, Function) else callee)
+        )
+        function = self._ctx.resolve_function(name)
+        if result_types is None:
+            result_types = function.type.outputs if function is not None else None
+
+        if function and tuple(result_types or ()) != function.type.outputs:
+            raise TypeError("call result types do not match its declaration")
+
+        if result_types is None:
+            raise ValueError(
+                f"result_types are required for unknown function: {name!r}"
             )
 
         def create(results: tuple[Value, ...]) -> Call:
             return Call(
-                callee=function.name,
+                callee=name,
                 arguments=tuple(arguments),
                 results=results,
             )
 
-        op = self._append_operation(function.type.outputs, create)
+        op = self._append_operation(result_types, create)
         return op.results
 
     def return_(self, *operands: Value) -> None:
         """Terminate the block by returning values from the function."""
 
         def create(results: tuple[Value, ...]) -> Return:
-            assert not results
             return Return(operands=operands)
 
         self._append_operation([], create)
@@ -393,7 +398,6 @@ class BlockBuilder(Builder[Block]):
         """Terminate the block by yielding values from a nested region."""
 
         def create(results: tuple[Value, ...]) -> Yield:
-            assert not results
             return Yield(operands=operands)
 
         self._append_operation([], create)
