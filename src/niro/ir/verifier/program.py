@@ -108,8 +108,8 @@ def _verify_region(
 ) -> None:
     if not region.blocks:
         raise ValueError("region must contain a block")
-    if terminator is ir.Yield and len(region.blocks) != 1:
-        raise ValueError("if region must contain exactly one block")
+    if len(region.blocks) != 1:
+        raise ValueError("multiple blocks per region are not supported yet")
     if tuple(value.type for value in region.blocks[0].arguments) != input_types:
         raise TypeError("region argument types do not match expected input types")
     for block in region.blocks:
@@ -178,16 +178,15 @@ def _verify_block(
                     functions=functions,
                     globals_=globals_,
                 )
-                if op.else_region.blocks or result_types:
-                    _verify_region(
-                        region=op.else_region,
-                        outer_scope=scope,
-                        input_types=(),
-                        output_types=result_types,
-                        terminator=ir.Yield,
-                        functions=functions,
-                        globals_=globals_,
-                    )
+                _verify_region(
+                    region=op.else_region,
+                    outer_scope=scope,
+                    input_types=(),
+                    output_types=result_types,
+                    terminator=ir.Yield,
+                    functions=functions,
+                    globals_=globals_,
+                )
 
             case (
                 ir.Const()

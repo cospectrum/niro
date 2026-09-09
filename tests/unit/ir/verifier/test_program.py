@@ -117,7 +117,7 @@ def test_nested_branches_capture_outer_values_and_publish_only_if_results() -> N
 
 
 @pytest.mark.parametrize("with_else", [False, True])
-def test_resultless_if_accepts_optional_else(with_else: bool) -> None:
+def test_resultless_if_requires_else_block(with_else: bool) -> None:
     condition = ir.Value(ir.ValueId(0), ir.ScalarType.BOOL)
     else_region = (
         ir.Region([ir.Block(operations=[ir.Yield()])]) if with_else else ir.Region()
@@ -138,8 +138,12 @@ def test_resultless_if_accepts_optional_else(with_else: bool) -> None:
         ]
     )
 
-    assert ir.verify(module) is module
-    assert conditional.else_region is else_region
+    if with_else:
+        assert ir.verify(module) is module
+        assert conditional.else_region is else_region
+    else:
+        with pytest.raises(ValueError, match="region must contain a block"):
+            ir.verify(module)
 
 
 def test_unknown_operations_participate_in_value_scope() -> None:
@@ -244,6 +248,12 @@ def test_duplicate_value_definitions(definition: str) -> None:
     ("blocks", "inputs", "error", "message"),
     [
         ([], (), ValueError, "region must contain a block"),
+        (
+            [ir.Block(operations=[ir.Return()]), ir.Block(operations=[ir.Return()])],
+            (),
+            ValueError,
+            "multiple blocks per region are not supported yet",
+        ),
         ([ir.Block()], (), ValueError, "must end with Return"),
         ([ir.Block(operations=[ir.Yield()])], (), ValueError, "must end with Return"),
         (
@@ -273,6 +283,7 @@ def test_duplicate_value_definitions(definition: str) -> None:
     ],
     ids=[
         "empty-body",
+        "multiple-blocks",
         "empty-block",
         "wrong-terminator",
         "early-return",
@@ -452,7 +463,7 @@ def test_invalid_if_regions(scenario: str) -> None:
             message = "region must contain a block"
         case "multiple-blocks":
             then.blocks.append(ir.Block(operations=[ir.Yield((value,))]))
-            message = "if region must contain exactly one block"
+            message = "multiple blocks per region are not supported yet"
         case "branch-arguments":
             then.blocks[0].arguments = (ir.Value(ir.ValueId(3), ir.ScalarType.I32),)
             error, message = TypeError, "region argument types"
