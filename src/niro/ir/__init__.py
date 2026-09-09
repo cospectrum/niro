@@ -29,6 +29,7 @@ from niro.ir.program import (
     Module,
     Region,
     SymbolName,
+    VerifiedModule,
 )
 from niro.ir.types import Dimension, ScalarType, Shape, TensorType, Type
 from niro.ir.values import Value, ValueId
@@ -68,6 +69,7 @@ __all__ = [
     "UnknownOp",
     "Value",
     "ValueId",
+    "VerifiedModule",
     "Yield",
     "as_op",
     "infer",

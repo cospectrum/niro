@@ -1,7 +1,7 @@
 import struct
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, assert_type
 
 import onnx
 import pytest
@@ -139,6 +139,7 @@ def test_imports_single_node_graph(case: OneNodeCase) -> None:
     )
 
     module = from_onnx(helper.make_model(graph=graph))
+    assert_type(module, ir.VerifiedModule)
 
     function = module.functions[0]
     assert function.body is not None
@@ -355,3 +356,18 @@ def test_domains_match_latest_onnx_schema_registry() -> None:
     registered_domains = {schema.domain for schema in onnx.defs.get_all_schemas()}
 
     assert set(_ONNX_DOMAINS) == registered_domains
+
+
+def test_import_verifies_operation_semantics() -> None:
+    graph = helper.make_graph(
+        nodes=[helper.make_node("Add", inputs=["lhs", "rhs"], outputs=["result"])],
+        name="boolean_add",
+        inputs=[
+            onnx_tensor("lhs", [2], TensorProto.BOOL),
+            onnx_tensor("rhs", [2], TensorProto.BOOL),
+        ],
+        outputs=[onnx_tensor("result", [2], TensorProto.BOOL)],
+    )
+
+    with pytest.raises(TypeError, match="add does not support boolean"):
+        from_onnx(helper.make_model(graph=graph))

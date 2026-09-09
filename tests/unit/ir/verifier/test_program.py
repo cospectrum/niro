@@ -1,3 +1,5 @@
+from typing import assert_type
+
 import pytest
 
 from niro import ir
@@ -6,7 +8,9 @@ from niro import ir
 def test_empty_module_can_be_verified_repeatedly() -> None:
     module = ir.Module()
 
-    assert ir.verify(module) is module
+    verified = ir.verify(module)
+    assert_type(verified, ir.VerifiedModule)
+    assert verified is module
     assert ir.verify(module) is module
     assert module.functions == []
     assert module.globals == []

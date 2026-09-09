@@ -32,6 +32,7 @@ def test_ir_exports_program() -> None:
         ir.FunctionBuilder,
         ir.FunctionType,
         ir.Module,
+        ir.VerifiedModule,
         ir.ModuleBuilder,
         ir.Region,
     )

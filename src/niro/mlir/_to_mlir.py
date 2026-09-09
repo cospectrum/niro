@@ -18,8 +18,8 @@ from niro import ir
 ValueTable = dict[ir.ValueId, SSAValue]
 
 
-def to_mlir(niro_module: ir.Module) -> builtin.ModuleOp:
-    """Convert a Niro module to a verified, high-level MLIR module."""
+def to_mlir(niro_module: ir.VerifiedModule) -> builtin.ModuleOp:
+    """Convert verified Niro IR to a verified, high-level MLIR module."""
     lowered_functions = [
         _lower_function(function) for function in niro_module.functions
     ]

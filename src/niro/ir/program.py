@@ -6,6 +6,7 @@ Re-exported in [`niro.ir`][].
 from __future__ import annotations
 
 from dataclasses import field
+from typing import NewType
 
 from pydantic import InstanceOf
 from pydantic.dataclasses import dataclass
@@ -76,3 +77,11 @@ class Module:
     functions: list[Function] = field(default_factory=list)
     globals: list[Global] = field(default_factory=list)
     attributes: Attributes = field(default_factory=dict)
+
+
+VerifiedModule = NewType("VerifiedModule", Module)
+"""A module that has passed [`niro.ir.verify`][].
+
+This is a static type marker, not an immutable snapshot. Verify again after
+changing the module.
+"""

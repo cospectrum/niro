@@ -33,9 +33,11 @@ from niro.ir.program import (
     Module,
     Region,
     SymbolName,
+    VerifiedModule,
 )
 from niro.ir.types import ScalarType, TensorType, Type
 from niro.ir.values import Value, ValueId
+from niro.ir.verifier import verify
 
 
 class Builder[T]:
@@ -83,6 +85,10 @@ class ModuleBuilder(Builder[Module]):
     def __init__(self) -> None:
         self.raw: Module = Module()
         """The [`niro.ir.Module`][] under construction."""
+
+    def verify(self) -> VerifiedModule:
+        """Verify and return the module under construction."""
+        return verify(self.raw)
 
     def function(
         self,

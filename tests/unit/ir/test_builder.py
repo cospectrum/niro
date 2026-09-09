@@ -1,3 +1,7 @@
+from typing import assert_type
+
+import pytest
+
 from niro import ir
 from niro.ir import FunctionBuilder, ModuleBuilder
 
@@ -255,3 +259,25 @@ def test_resolution_uses_first_matching_module_declaration() -> None:
 
     assert block.call(duplicate)[0].type is ir.ScalarType.I32
     assert block.get_global(duplicate_global).type is ir.ScalarType.I32
+
+
+def test_verify_returns_raw_module_with_verified_type() -> None:
+    module = ModuleBuilder()
+    block = module.function(name="main", type=ir.FunctionType((), ())).region().block()
+    block.return_()
+
+    verified = module.verify()
+
+    assert_type(verified, ir.VerifiedModule)
+    assert verified is module.raw
+
+
+def test_verify_checks_current_builder_contents() -> None:
+    module = ModuleBuilder()
+    block = module.function(name="main", type=ir.FunctionType((), ())).region().block()
+    block.return_()
+    module.verify()
+    block.i32(1)
+
+    with pytest.raises(ValueError, match="must end with Return"):
+        module.verify()

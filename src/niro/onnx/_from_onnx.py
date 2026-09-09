@@ -25,8 +25,8 @@ class Ctx:
     types: Mapping[OnnxValueName, ir.Type]
 
 
-def from_onnx(onnx_model: onnx.ModelProto) -> ir.Module:
-    """Convert an ONNX model to Niro IR."""
+def from_onnx(onnx_model: onnx.ModelProto) -> ir.VerifiedModule:
+    """Convert an ONNX model to verified Niro IR."""
     graph = onnx_model.graph
     module = ModuleBuilder()
     weights = _import_initializers(graph, module)
@@ -36,7 +36,7 @@ def from_onnx(onnx_model: onnx.ModelProto) -> ir.Module:
         types=_collect_types(graph),
     )
     _import_forward(ctx, module)
-    return module.raw
+    return module.verify()
 
 
 def node_name(node: onnx.NodeProto) -> str:

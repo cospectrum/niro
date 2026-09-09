@@ -8,6 +8,7 @@ module = ir.ModuleBuilder()
 function = module.function(name="main", type=ir.FunctionType((), ()))
 block = function.region().first_block()
 block.return_()
+verified = module.verify()
 ```
 
 Use [`ir.infer`](infer.md) to infer operation result types from operand types

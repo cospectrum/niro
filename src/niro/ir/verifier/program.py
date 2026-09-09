@@ -20,7 +20,15 @@ from niro.ir.ops import (
     UnknownOp,
     Yield,
 )
-from niro.ir.program import Block, Function, Global, Module, Region, SymbolName
+from niro.ir.program import (
+    Block,
+    Function,
+    Global,
+    Module,
+    Region,
+    SymbolName,
+    VerifiedModule,
+)
 from niro.ir.types import Type
 from niro.ir.values import Value, ValueId
 from niro.ir.verifier.ops import _verify_op
@@ -28,14 +36,14 @@ from niro.ir.verifier.ops import _verify_op
 __all__ = ["verify"]
 
 
-def verify(module: Module) -> Module:
+def verify(module: Module) -> VerifiedModule:
     """Verify module structure, references, and operations; return the same module."""
     _verify_symbol_names(module)
     functions = {function.name: function for function in module.functions}
     globals_ = {global_.name: global_ for global_ in module.globals}
     for function in module.functions:
         _verify_function(function, functions, globals_)
-    return module
+    return VerifiedModule(module)
 
 
 def _verify_symbol_names(module: Module) -> None:
