@@ -6,10 +6,9 @@ import onnx
 
 from niro import ir
 from niro.ir import BlockBuilder, FunctionBuilder, ModuleBuilder, VerifiedModule
-from niro.onnx import value_table as onnx_values
 from niro.onnx.op_type import OnnxOpType
 
-from .value_table import OnnxValueName
+from .value_table import OnnxValueName, OnnxValueTable
 
 _ONNX_DOMAINS = (
     "",
@@ -56,7 +55,7 @@ def _import_forward(ctx: Ctx, module: ModuleBuilder) -> ir.Function:
 
     block = fn.region().first_block()
 
-    value_table = onnx_values.OnnxValueTable()
+    value_table = OnnxValueTable()
     value_table.define_many(
         (cast(str, name) for name in input_names),
         block.raw.arguments,
