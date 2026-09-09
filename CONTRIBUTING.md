@@ -105,11 +105,18 @@ compromising correctness or output quality. When contributing:
 
 - Prefer compact, straightforward design that models the required semantics
   precisely, and keep the core IR independent of any single frontend or backend.
+- Prefer functional programming over OOP. Default to plain data and standalone
+  functions. Use dataclasses to represent
+  data. Introduce behavior-owning classes only when they simplify shared mutable
+  state or resource lifecycles; avoid inheritance and classes that merely group
+  functions.
 - Prefer early returns and guard clauses over nested conditionals.
 - Trust type annotations. Avoid defensive `isinstance` checks in typed code;
   reserve runtime type checks for external inputs or narrowing union variants.
 - Use type hints throughout Python code and derive redundant information rather
   than storing it.
+- Annotate read-only mapping inputs as `Mapping[K, V]`; use `dict[K, V]` when
+  mutation or a concrete dictionary is required.
 - Establish invariants at construction time, use assertions to check internal
   invariants.
 
