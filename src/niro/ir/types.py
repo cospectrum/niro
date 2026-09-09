@@ -38,12 +38,13 @@ class TensorType:
     shape: Shape | None
 
     def __post_init__(self) -> None:
-        if self.shape is not None:
-            for dimension in self.shape:
-                if dimension is None:
-                    continue
-                if dimension < 0:
-                    raise ValueError("tensor dimensions must be nonnegative")
+        if self.shape is None:
+            return
+        for dimension in self.shape:
+            if dimension is None:
+                continue
+            if dimension < 0:
+                raise ValueError("tensor dimensions must be nonnegative")
 
     @property
     def rank(self) -> int | None:

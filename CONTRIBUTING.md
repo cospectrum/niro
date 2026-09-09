@@ -35,16 +35,16 @@ nix run .#ci
 
 Unit tests mirror the source tree under `tests/unit/`. End-to-end tests live under
 `tests/e2e/`, grouped by the interface or workflow they exercise.
+Test meaningful behavior and invariants.
 
 ## Documentation
+
+Keep documentation concise and introduce concepts before relying on them.
 
 Keep [docs/ir.md](docs/ir.md) language agnostic: it defines the IR's concepts,
 structure, semantics, and validity rules. Do not add implementation details such
 as Python dataclasses, inheritance, runtime validation mechanisms, or accessor
 APIs. Document the Python API in docstrings and `docs/niro/ir/` instead.
-Implementation-only refactors should not change the IR specification unless
-they change its semantics. In structure diagrams, use `Name*` for zero or more
-elements and `Name?` for zero or one.
 
 Preview the documentation with Zensical while editing it:
 
@@ -60,6 +60,12 @@ uv run zensical build --clean
 
 Write Python docstrings in [Google style][google-docstrings]. Use cross-references
 for Python objects and modules so generated API references are clickable.
+
+In public API annotations, use directly imported types (`Op` from
+`niro.ir.ops`) or fully qualified paths (`niro.ir.ops.Op`) so generated type
+links resolve. Avoid module aliases such as `ir.Op` in these annotations.
+Prefer namespace-qualified names such as `ir.*` in internal code, including
+function bodies and private annotations in the same file.
 
 Generate API reference pages from public members using `filters: public` or
 filters that exclude private and internal names. Try not to enumerate `members`
@@ -99,11 +105,13 @@ compromising correctness or output quality. When contributing:
 
 - Prefer compact, straightforward design that models the required semantics
   precisely, and keep the core IR independent of any single frontend or backend.
+- Prefer early returns and guard clauses over nested conditionals.
+- Trust type annotations. Avoid defensive `isinstance` checks in typed code;
+  reserve runtime type checks for external inputs or narrowing union variants.
 - Use type hints throughout Python code and derive redundant information rather
   than storing it.
 - Establish invariants at construction time, use assertions to check internal
-  invariants, and test meaningful behavior and invariants.
-- Keep documentation concise and introduce concepts before relying on them.
+  invariants.
 
 [uv]: https://docs.astral.sh/uv/
 [google-docstrings]: https://google.github.io/styleguide/pyguide.html#38-comments-and-docstrings
