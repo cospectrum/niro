@@ -4,10 +4,10 @@ from typing import cast
 
 import onnx
 
-import niro.onnx
 from niro import ir
 from niro.ir import BlockBuilder, FunctionBuilder, ModuleBuilder, VerifiedModule
 from niro.onnx import value_table as onnx_values
+from niro.onnx.op_type import OnnxOpType
 
 from .value_table import OnnxValueName
 
@@ -119,16 +119,16 @@ def _import_node(
         return _import_unknown_node(ctx, block, node, operands)
 
     match node.op_type:
-        case niro.onnx.OnnxOpType.Add:
+        case OnnxOpType.Add:
             lhs, rhs = operands
             return block.add(lhs, rhs)
-        case niro.onnx.OnnxOpType.Mul:
+        case OnnxOpType.Mul:
             lhs, rhs = operands
             return block.mul(lhs, rhs)
-        case niro.onnx.OnnxOpType.MatMul:
+        case OnnxOpType.MatMul:
             lhs, rhs = operands
             return block.matmul(lhs, rhs)
-        case niro.onnx.OnnxOpType.Transpose:
+        case OnnxOpType.Transpose:
             return _import_transpose(block, node, operands)
         case _:
             return _import_unknown_node(ctx, block, node, operands)

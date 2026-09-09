@@ -8,9 +8,8 @@ import pytest
 from onnx import TensorProto, helper
 
 import niro
-import niro.onnx
 from niro import ir
-from niro.onnx import _from_onnx
+from niro.onnx import _from_onnx, op_type
 
 
 def onnx_tensor(
@@ -35,7 +34,7 @@ class OneNodeCase:
 
 def one_node_case(
     *,
-    onnx_op_type: niro.onnx.OnnxOpType | str,
+    onnx_op_type: op_type.OnnxOpType | str,
     input_shapes: Sequence[Sequence[int]],
     output_shapes: Sequence[Sequence[int]],
     expected_op: type[ir.Op],
@@ -82,32 +81,32 @@ def one_node_case(
     "case",
     [
         one_node_case(
-            onnx_op_type=niro.onnx.OnnxOpType.Add,
+            onnx_op_type=op_type.OnnxOpType.Add,
             input_shapes=[(2,), (2,)],
             output_shapes=[(2,)],
             expected_op=ir.Add,
         ),
         one_node_case(
-            onnx_op_type=niro.onnx.OnnxOpType.Mul,
+            onnx_op_type=op_type.OnnxOpType.Mul,
             input_shapes=[(2,), (2,)],
             output_shapes=[(2,)],
             expected_op=ir.Mul,
         ),
         one_node_case(
-            onnx_op_type=niro.onnx.OnnxOpType.MatMul,
+            onnx_op_type=op_type.OnnxOpType.MatMul,
             input_shapes=[(2, 3), (3, 4)],
             output_shapes=[(2, 4)],
             expected_op=ir.MatMul,
         ),
         one_node_case(
-            onnx_op_type=niro.onnx.OnnxOpType.Transpose,
+            onnx_op_type=op_type.OnnxOpType.Transpose,
             input_shapes=[(2, 3)],
             output_shapes=[(3, 2)],
             expected_op=ir.Transpose,
             perm=[1, 0],
         ),
         one_node_case(
-            onnx_op_type=niro.onnx.OnnxOpType.LeakyRelu,
+            onnx_op_type=op_type.OnnxOpType.LeakyRelu,
             input_shapes=[(2,)],
             output_shapes=[(2,)],
             expected_op=ir.UnknownOp,
@@ -121,7 +120,7 @@ def one_node_case(
             domain="example",
         ),
         one_node_case(
-            onnx_op_type=niro.onnx.OnnxOpType.TopK,
+            onnx_op_type=op_type.OnnxOpType.TopK,
             input_shapes=[(5,), ()],
             output_shapes=[(3,), (3,)],
             expected_op=ir.UnknownOp,
@@ -184,7 +183,7 @@ def test_imports_initializer_as_tensor_constant() -> None:
     graph = helper.make_graph(
         nodes=[
             helper.make_node(
-                op_type=niro.onnx.OnnxOpType.Mul,
+                op_type=op_type.OnnxOpType.Mul,
                 inputs=["x", "weight"],
                 outputs=["result"],
             )
@@ -228,13 +227,13 @@ def test_imports_matmul_and_transpose() -> None:
     graph = helper.make_graph(
         nodes=[
             helper.make_node(
-                op_type=niro.onnx.OnnxOpType.Transpose,
+                op_type=op_type.OnnxOpType.Transpose,
                 inputs=["rhs"],
                 outputs=["rhs_t"],
                 perm=[1, 0],
             ),
             helper.make_node(
-                op_type=niro.onnx.OnnxOpType.MatMul,
+                op_type=op_type.OnnxOpType.MatMul,
                 inputs=["lhs", "rhs_t"],
                 outputs=["result"],
             ),
@@ -274,12 +273,12 @@ def test_preserves_node_and_graph_output_order() -> None:
     graph = helper.make_graph(
         nodes=[
             helper.make_node(
-                op_type=niro.onnx.OnnxOpType.Add,
+                op_type=op_type.OnnxOpType.Add,
                 inputs=["lhs", "rhs"],
                 outputs=["sum"],
             ),
             helper.make_node(
-                op_type=niro.onnx.OnnxOpType.Mul,
+                op_type=op_type.OnnxOpType.Mul,
                 inputs=["lhs", "rhs"],
                 outputs=["product"],
             ),
