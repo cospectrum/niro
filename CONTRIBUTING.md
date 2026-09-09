@@ -38,6 +38,14 @@ Unit tests mirror the source tree under `tests/unit/`. End-to-end tests live und
 
 ## Documentation
 
+Keep [docs/ir.md](docs/ir.md) language agnostic: it defines the IR's concepts,
+structure, semantics, and validity rules. Do not add implementation details such
+as Python dataclasses, inheritance, runtime validation mechanisms, or accessor
+APIs. Document the Python API in docstrings and `docs/niro/ir/` instead.
+Implementation-only refactors should not change the IR specification unless
+they change its semantics. In structure diagrams, use `Name*` for zero or more
+elements and `Name?` for zero or one.
+
 Preview the documentation with Zensical while editing it:
 
 ```sh
