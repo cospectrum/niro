@@ -1,12 +1,11 @@
 from pathlib import Path
 
-from .onnx_models import ModelCase
-from .support import InstalledCli
+from . import onnx_models, support
 
 
 def test_mlir(
-    installed_cli: InstalledCli,
-    onnx_model: ModelCase,
+    installed_cli: support.InstalledCli,
+    onnx_model: onnx_models.ModelCase,
     model_input: tuple[tuple[str | Path, ...], bytes | None],
 ) -> None:
     arguments, input_data = model_input

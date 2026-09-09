@@ -4,9 +4,8 @@ import onnx
 from onnx import TensorProto, helper
 from typer.testing import CliRunner
 
-from niro import ir
-from niro.cli import app
-from niro.cli.signature import format_signature
+from niro import cli, ir
+from niro.cli import signature
 
 runner = CliRunner()
 
@@ -34,9 +33,9 @@ def test_command_discovery_and_file_input(tmp_path: Path) -> None:
     path = tmp_path / "model.onnx"
     onnx.save(model(), path)
 
-    root = runner.invoke(app)
-    inspect = runner.invoke(app, ["inspect"])
-    result = runner.invoke(app, ["inspect", "signature", str(path)])
+    root = runner.invoke(cli.app)
+    inspect = runner.invoke(cli.app, ["inspect"])
+    result = runner.invoke(cli.app, ["inspect", "signature", str(path)])
 
     assert "inspect" in root.stdout
     assert "signature" in inspect.stdout
@@ -47,14 +46,16 @@ def test_command_discovery_and_file_input(tmp_path: Path) -> None:
 def test_stdin_and_input_errors(tmp_path: Path) -> None:
     data = model().SerializeToString()
     implicit = runner.invoke(
-        app, ["inspect", "signature", "--input-format", "onnx"], input=data
+        cli.app, ["inspect", "signature", "--input-format", "onnx"], input=data
     )
     explicit = runner.invoke(
-        app, ["inspect", "signature", "--input-format", "onnx", "-"], input=data
+        cli.app, ["inspect", "signature", "--input-format", "onnx", "-"], input=data
     )
-    unknown = runner.invoke(app, ["inspect", "signature", str(tmp_path / "model.bin")])
+    unknown = runner.invoke(
+        cli.app, ["inspect", "signature", str(tmp_path / "model.bin")]
+    )
     malformed = runner.invoke(
-        app,
+        cli.app,
         ["inspect", "signature", "--input-format", "onnx"],
         input=b"not onnx",
     )
@@ -68,7 +69,7 @@ def test_stdin_and_input_errors(tmp_path: Path) -> None:
 
 
 def test_formats_types_and_partial_names() -> None:
-    formatted = format_signature(
+    formatted = signature.format_signature(
         function(
             (
                 ir.ScalarType.F32,
@@ -89,7 +90,7 @@ def test_formats_types_and_partial_names() -> None:
 
 def test_wraps_outputs_only() -> None:
     tensor = ir.TensorType(ir.ScalarType.F32, (1, 128000, 123456789))
-    formatted = format_signature(
+    formatted = signature.format_signature(
         function(
             (ir.ScalarType.F32,), (tensor, tensor), ("x",), ("logits", "hidden_state")
         )
@@ -104,7 +105,7 @@ def test_wraps_outputs_only() -> None:
 
 def test_wraps_inputs_with_trailing_commas_and_zero_results() -> None:
     tensor = ir.TensorType(ir.ScalarType.F32, (1, 3, 224, 224))
-    formatted = format_signature(
+    formatted = signature.format_signature(
         function(
             (tensor, tensor, tensor), (), ("first_input", "second_input", "third_input")
         )
@@ -120,7 +121,7 @@ def test_wraps_inputs_with_trailing_commas_and_zero_results() -> None:
 
 def test_one_line_at_exact_boundary() -> None:
     name = "m" * 89
-    formatted = format_signature(
+    formatted = signature.format_signature(
         ir.Function(name, ir.FunctionType((ir.ScalarType.F32,), ()))
     )
     assert len(formatted) == 100

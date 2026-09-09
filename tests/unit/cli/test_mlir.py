@@ -4,7 +4,7 @@ import onnx
 from onnx import TensorProto, helper
 from typer.testing import CliRunner
 
-from niro.cli import app
+from niro import cli
 
 runner = CliRunner()
 
@@ -25,8 +25,8 @@ def model() -> onnx.ModelProto:
 
 
 def test_root_and_emit_show_help() -> None:
-    root = runner.invoke(app)
-    emit = runner.invoke(app, ["emit"])
+    root = runner.invoke(cli.app)
+    emit = runner.invoke(cli.app, ["emit"])
 
     assert "emit" in root.stdout
     assert "mlir" in emit.stdout
@@ -36,7 +36,7 @@ def test_emits_mlir_to_stdout_from_onnx_file(tmp_path: Path) -> None:
     input_path = tmp_path / "model.ONNX"
     onnx.save(model(), input_path)
 
-    result = runner.invoke(app, ["emit", "mlir", str(input_path)])
+    result = runner.invoke(cli.app, ["emit", "mlir", str(input_path)])
 
     assert result.exit_code == 0
     assert "builtin.module" in result.stdout
@@ -49,7 +49,7 @@ def test_emits_mlir_to_file(tmp_path: Path) -> None:
     onnx.save(model(), input_path)
 
     result = runner.invoke(
-        app,
+        cli.app,
         ["emit", "mlir", str(input_path), "-o", str(output_path)],
     )
 
@@ -62,12 +62,12 @@ def test_reads_onnx_from_implicit_or_explicit_stdin() -> None:
     data = model().SerializeToString()
 
     implicit = runner.invoke(
-        app,
+        cli.app,
         ["emit", "mlir", "--input-format", "onnx"],
         input=data,
     )
     explicit = runner.invoke(
-        app,
+        cli.app,
         ["emit", "mlir", "--input-format", "onnx", "-"],
         input=data,
     )
@@ -80,8 +80,8 @@ def test_reads_onnx_from_implicit_or_explicit_stdin() -> None:
 def test_requires_input_format_for_stdin_or_unknown_extension(
     tmp_path: Path,
 ) -> None:
-    stdin = runner.invoke(app, ["emit", "mlir"])
-    unknown = runner.invoke(app, ["emit", "mlir", str(tmp_path / "model.bin")])
+    stdin = runner.invoke(cli.app, ["emit", "mlir"])
+    unknown = runner.invoke(cli.app, ["emit", "mlir", str(tmp_path / "model.bin")])
 
     assert stdin.exit_code != 0
     assert "--input-format" in stdin.stderr

@@ -1,15 +1,15 @@
 import struct
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, assert_type
 
 import onnx
 import pytest
 from onnx import TensorProto, helper
 
+import niro
 from niro import ir
-from niro.onnx import OnnxOpType, from_onnx
-from niro.onnx._from_onnx import _ONNX_DOMAINS, node_name
+from niro.onnx import _from_onnx, op_type
 
 
 def onnx_tensor(
@@ -34,7 +34,7 @@ class OneNodeCase:
 
 def one_node_case(
     *,
-    onnx_op_type: OnnxOpType | str,
+    onnx_op_type: op_type.OnnxOpType | str,
     input_shapes: Sequence[Sequence[int]],
     output_shapes: Sequence[Sequence[int]],
     expected_op: type[ir.Op],
@@ -81,32 +81,32 @@ def one_node_case(
     "case",
     [
         one_node_case(
-            onnx_op_type=OnnxOpType.Add,
+            onnx_op_type=op_type.OnnxOpType.Add,
             input_shapes=[(2,), (2,)],
             output_shapes=[(2,)],
             expected_op=ir.Add,
         ),
         one_node_case(
-            onnx_op_type=OnnxOpType.Mul,
+            onnx_op_type=op_type.OnnxOpType.Mul,
             input_shapes=[(2,), (2,)],
             output_shapes=[(2,)],
             expected_op=ir.Mul,
         ),
         one_node_case(
-            onnx_op_type=OnnxOpType.MatMul,
+            onnx_op_type=op_type.OnnxOpType.MatMul,
             input_shapes=[(2, 3), (3, 4)],
             output_shapes=[(2, 4)],
             expected_op=ir.MatMul,
         ),
         one_node_case(
-            onnx_op_type=OnnxOpType.Transpose,
+            onnx_op_type=op_type.OnnxOpType.Transpose,
             input_shapes=[(2, 3)],
             output_shapes=[(3, 2)],
             expected_op=ir.Transpose,
             perm=[1, 0],
         ),
         one_node_case(
-            onnx_op_type=OnnxOpType.LeakyRelu,
+            onnx_op_type=op_type.OnnxOpType.LeakyRelu,
             input_shapes=[(2,)],
             output_shapes=[(2,)],
             expected_op=ir.UnknownOp,
@@ -120,7 +120,7 @@ def one_node_case(
             domain="example",
         ),
         one_node_case(
-            onnx_op_type=OnnxOpType.TopK,
+            onnx_op_type=op_type.OnnxOpType.TopK,
             input_shapes=[(5,), ()],
             output_shapes=[(3,), (3,)],
             expected_op=ir.UnknownOp,
@@ -138,7 +138,8 @@ def test_imports_single_node_graph(case: OneNodeCase) -> None:
         outputs=list(case.outputs),
     )
 
-    module = from_onnx(helper.make_model(graph=graph))
+    module = niro.from_onnx(helper.make_model(graph=graph))
+    assert_type(module, ir.VerifiedModule)
 
     function = module.functions[0]
     assert function.body is not None
@@ -182,7 +183,7 @@ def test_imports_initializer_as_tensor_constant() -> None:
     graph = helper.make_graph(
         nodes=[
             helper.make_node(
-                op_type=OnnxOpType.Mul,
+                op_type=op_type.OnnxOpType.Mul,
                 inputs=["x", "weight"],
                 outputs=["result"],
             )
@@ -193,7 +194,7 @@ def test_imports_initializer_as_tensor_constant() -> None:
         initializer=[weight],
     )
 
-    module = from_onnx(helper.make_model(graph=graph))
+    module = niro.from_onnx(helper.make_model(graph=graph))
 
     function = module.functions[0]
     assert function.body is not None
@@ -226,13 +227,13 @@ def test_imports_matmul_and_transpose() -> None:
     graph = helper.make_graph(
         nodes=[
             helper.make_node(
-                op_type=OnnxOpType.Transpose,
+                op_type=op_type.OnnxOpType.Transpose,
                 inputs=["rhs"],
                 outputs=["rhs_t"],
                 perm=[1, 0],
             ),
             helper.make_node(
-                op_type=OnnxOpType.MatMul,
+                op_type=op_type.OnnxOpType.MatMul,
                 inputs=["lhs", "rhs_t"],
                 outputs=["result"],
             ),
@@ -243,7 +244,7 @@ def test_imports_matmul_and_transpose() -> None:
         value_info=[onnx_tensor("rhs_t", [3, 4])],
     )
 
-    module = from_onnx(helper.make_model(graph=graph))
+    module = niro.from_onnx(helper.make_model(graph=graph))
 
     function = module.functions[0]
     assert function.body is not None
@@ -272,12 +273,12 @@ def test_preserves_node_and_graph_output_order() -> None:
     graph = helper.make_graph(
         nodes=[
             helper.make_node(
-                op_type=OnnxOpType.Add,
+                op_type=op_type.OnnxOpType.Add,
                 inputs=["lhs", "rhs"],
                 outputs=["sum"],
             ),
             helper.make_node(
-                op_type=OnnxOpType.Mul,
+                op_type=op_type.OnnxOpType.Mul,
                 inputs=["lhs", "rhs"],
                 outputs=["product"],
             ),
@@ -287,7 +288,7 @@ def test_preserves_node_and_graph_output_order() -> None:
         outputs=[onnx_tensor("product", [2]), onnx_tensor("sum", [2])],
     )
 
-    module = from_onnx(helper.make_model(graph=graph))
+    module = niro.from_onnx(helper.make_model(graph=graph))
 
     function = module.functions[0]
     assert function.body is not None
@@ -310,12 +311,12 @@ def assert_imported_node(
     values: dict[str, ir.Value],
 ) -> tuple[ir.Value, ...]:
     """Compare one imported operation with its source node and bind outputs."""
-    normalized = as_onnx_unknown_op(operation, node_name(node))
+    normalized = as_onnx_unknown_op(operation, _from_onnx.node_name(node))
     attributes = {
         attribute.name: _normalize_attribute(onnx.helper.get_attribute_value(attribute))
         for attribute in node.attribute
     }
-    assert normalized.name == node_name(node)
+    assert normalized.name == _from_onnx.node_name(node)
     assert normalized.operands == tuple(values[name] for name in node.input)
     assert normalized.attributes == attributes
     assert len(normalized.results) == len(node.output)
@@ -354,4 +355,19 @@ def _normalize_attribute(value: object) -> ir.AttributeValue:
 def test_domains_match_latest_onnx_schema_registry() -> None:
     registered_domains = {schema.domain for schema in onnx.defs.get_all_schemas()}
 
-    assert set(_ONNX_DOMAINS) == registered_domains
+    assert set(_from_onnx._ONNX_DOMAINS) == registered_domains
+
+
+def test_import_verifies_operation_semantics() -> None:
+    graph = helper.make_graph(
+        nodes=[helper.make_node("Add", inputs=["lhs", "rhs"], outputs=["result"])],
+        name="boolean_add",
+        inputs=[
+            onnx_tensor("lhs", [2], TensorProto.BOOL),
+            onnx_tensor("rhs", [2], TensorProto.BOOL),
+        ],
+        outputs=[onnx_tensor("result", [2], TensorProto.BOOL)],
+    )
+
+    with pytest.raises(TypeError, match="add does not support boolean"):
+        niro.from_onnx(helper.make_model(graph=graph))

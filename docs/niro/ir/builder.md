@@ -3,7 +3,7 @@
       heading_level: 1
       filters:
         - "!^_"
-        - "!^Ctx"
+        - "!^(ModuleCtx|FunctionCtx)$"
       merge_init_into_class: false
       show_if_no_docstring: true
       show_root_full_path: true

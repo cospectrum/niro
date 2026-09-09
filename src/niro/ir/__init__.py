@@ -1,5 +1,18 @@
 """Niro IR is a strongly typed, SSA-based representation composed of types,
 values, program structure, operations, literals, and attributes.
+
+Construct IR programs with `ir.ModuleBuilder`, `ir.FunctionBuilder`, and
+`ir.BlockBuilder`. See the [builder reference][niro.ir.builder] for their methods.
+
+```python
+from niro import ir
+
+module = ir.ModuleBuilder()
+function = module.function(name="main", type=ir.FunctionType((), ()))
+block = function.region().first_block()
+block.return_()
+verified_module = module.verify()
+```
 """
 
 from niro.ir import infer
@@ -29,9 +42,11 @@ from niro.ir.program import (
     Module,
     Region,
     SymbolName,
+    VerifiedModule,
 )
 from niro.ir.types import Dimension, ScalarType, Shape, TensorType, Type
 from niro.ir.values import Value, ValueId
+from niro.ir.verifier import verify
 
 __all__ = [
     "Add",
@@ -67,7 +82,9 @@ __all__ = [
     "UnknownOp",
     "Value",
     "ValueId",
+    "VerifiedModule",
     "Yield",
     "as_op",
     "infer",
+    "verify",
 ]

@@ -1,23 +1,22 @@
 import pytest
 from xdsl.dialects import builtin, ml_program
 
+import niro
 from niro import ir
-from niro.ir import ModuleBuilder
-from niro.mlir import format_mlir, to_mlir
 
 
 def test_lowers_tensor_add() -> None:
     tensor_type = ir.TensorType(element_type=ir.ScalarType.F32, shape=(2, 2))
-    module = ModuleBuilder()
+    module = ir.ModuleBuilder()
     function = module.function(
         name="model",
         type=ir.FunctionType((tensor_type, tensor_type), (tensor_type,)),
     )
     block = function.region().block((tensor_type, tensor_type))
-    result = block.add(*block.inner.arguments)
+    result = block.add(*block.raw.arguments)
     block.return_(result)
 
-    text = format_mlir(to_mlir(module.inner))
+    text = niro.format_mlir(niro.to_mlir(module.verify()))
 
     assert "func.func @model" in text
     assert "%2 = arith.addf %0, %1 : tensor<2x2xf32>" in text
@@ -27,23 +26,23 @@ def test_lowers_tensor_add() -> None:
 def test_lowers_tensor_weight_to_private_immutable_global() -> None:
     tensor_type = ir.TensorType(element_type=ir.ScalarType.F32, shape=(2, 2))
     data = bytes(range(16))
-    module = ModuleBuilder()
+    module = ir.ModuleBuilder()
     function = module.function(
         name="model",
         type=ir.FunctionType((tensor_type,), (tensor_type,)),
     )
     block = function.region().block((tensor_type,))
     weight = block.tensor(data, tensor_type)
-    result = block.matmul(block.inner.arguments[0], weight)
+    result = block.matmul(block.raw.arguments[0], weight)
     block.return_(result)
 
-    lowered = to_mlir(module.inner)
+    lowered = niro.to_mlir(module.verify())
 
     operations = list(lowered.body.block.ops)
     global_ = operations[0]
     assert isinstance(global_, ml_program.GlobalOp)
     assert isinstance(global_.value, builtin.DenseResourceAttr)
-    text = format_mlir(lowered)
+    text = niro.format_mlir(lowered)
     assert "ml_program.global private @__niro_model_1" in text
     assert "dense_resource<__niro_model_1>" in text
     assert f'__niro_model_1: "0x{data.hex().upper()}"' in text
@@ -52,22 +51,22 @@ def test_lowers_tensor_weight_to_private_immutable_global() -> None:
 
 
 def test_lowers_private_helper_and_call() -> None:
-    module = ModuleBuilder()
+    module = ir.ModuleBuilder()
     helper = module.function(
         name="helper",
         type=ir.FunctionType((ir.ScalarType.I32,), (ir.ScalarType.I32,)),
     )
     helper_block = helper.region().block((ir.ScalarType.I32,))
-    helper_block.return_(helper_block.inner.arguments[0])
+    helper_block.return_(helper_block.raw.arguments[0])
     main = module.function(
         name="model",
         type=ir.FunctionType((ir.ScalarType.I32,), (ir.ScalarType.I32,)),
     )
     main_block = main.region().block((ir.ScalarType.I32,))
-    (result,) = main_block.call(helper, main_block.inner.arguments)
+    (result,) = main_block.call(helper, main_block.raw.arguments)
     main_block.return_(result)
 
-    text = format_mlir(to_mlir(module.inner))
+    text = niro.format_mlir(niro.to_mlir(module.verify()))
 
     assert "func.func @helper" in text
     assert "func.func @model" in text
@@ -77,16 +76,16 @@ def test_lowers_private_helper_and_call() -> None:
 def test_lowers_static_transpose() -> None:
     input_type = ir.TensorType(element_type=ir.ScalarType.F32, shape=(2, 3))
     output_type = ir.TensorType(element_type=ir.ScalarType.F32, shape=(3, 2))
-    module = ModuleBuilder()
+    module = ir.ModuleBuilder()
     function = module.function(
         name="model",
         type=ir.FunctionType((input_type,), (output_type,)),
     )
     block = function.region().block((input_type,))
-    result = block.transpose(block.inner.arguments[0], [1, 0])
+    result = block.transpose(block.raw.arguments[0], [1, 0])
     block.return_(result)
 
-    text = format_mlir(to_mlir(module.inner))
+    text = niro.format_mlir(niro.to_mlir(module.verify()))
 
     assert "%1 = tensor.empty() : tensor<3x2xf32>" in text
     assert "linalg.transpose" in text
@@ -122,7 +121,7 @@ def test_lowers_if_and_yield() -> None:
     )
     module = ir.Module(functions=[function])
 
-    text = format_mlir(to_mlir(module))
+    text = niro.format_mlir(niro.to_mlir(ir.verify(module)))
 
     assert "scf.if %0 -> (i1)" in text
     assert text.count("scf.yield %0 : i1") == 2
@@ -130,20 +129,20 @@ def test_lowers_if_and_yield() -> None:
 
 
 def test_preserves_metadata_with_niro_namespace() -> None:
-    module = ModuleBuilder()
+    module = ir.ModuleBuilder()
     function = module.function(name="model", type=ir.FunctionType((), ()))
-    function.inner.attributes["note"] = "function"
+    function.raw.attributes["note"] = "function"
     function.region().block().return_()
-    module.inner.attributes["version"] = 1
+    module.raw.attributes["version"] = 1
 
-    text = format_mlir(to_mlir(module.inner))
+    text = niro.format_mlir(niro.to_mlir(module.verify()))
 
     assert "niro.version = 1 : i64" in text
     assert 'niro.note = "function"' in text
 
 
 def test_rejects_unknown_operation() -> None:
-    module = ModuleBuilder()
+    module = ir.ModuleBuilder()
     function = module.function(
         name="model",
         type=ir.FunctionType((ir.ScalarType.F32,), (ir.ScalarType.F32,)),
@@ -151,7 +150,7 @@ def test_rejects_unknown_operation() -> None:
     block = function.region().block((ir.ScalarType.F32,))
     (result,) = block.unknown_op(
         name="onnx.Relu",
-        operands=block.inner.arguments,
+        operands=block.raw.arguments,
         result_types=[ir.ScalarType.F32],
     )
     block.return_(result)
@@ -160,7 +159,7 @@ def test_rejects_unknown_operation() -> None:
         NotImplementedError,
         match="cannot lower unknown operation to MLIR: onnx.Relu",
     ):
-        to_mlir(module.inner)
+        niro.to_mlir(module.verify())
 
 
 def test_rejects_dynamic_matmul() -> None:
@@ -168,15 +167,15 @@ def test_rejects_dynamic_matmul() -> None:
         element_type=ir.ScalarType.F32,
         shape=(None, 2),
     )
-    module = ModuleBuilder()
+    module = ir.ModuleBuilder()
     function = module.function(
         name="model",
         type=ir.FunctionType((tensor_type, tensor_type), (tensor_type,)),
     )
     block = function.region().block((tensor_type, tensor_type))
     result = block.matmul(
-        block.inner.arguments[0],
-        block.inner.arguments[1],
+        block.raw.arguments[0],
+        block.raw.arguments[1],
     )
     block.return_(result)
 
@@ -184,4 +183,4 @@ def test_rejects_dynamic_matmul() -> None:
         NotImplementedError,
         match="matmul requires a static ranked tensor",
     ):
-        to_mlir(module.inner)
+        niro.to_mlir(module.verify())
