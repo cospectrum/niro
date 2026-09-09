@@ -1,23 +1,12 @@
 """Niro IR is a strongly typed, SSA-based representation composed of types,
 values, program structure, operations, literals, and attributes.
 
-Construct IR programs with `ir.ModuleBuilder`, `ir.FunctionBuilder`, and
-`ir.BlockBuilder`. See the [builder reference][niro.ir.builder] for their methods.
-
-```python
-from niro import ir
-
-module = ir.ModuleBuilder()
-function = module.function(name="main", type=ir.FunctionType((), ()))
-block = function.region().first_block()
-block.return_()
-verified_module = module.verify()
-```
+Construct programs with [`niro.builder`][] and verify them with
+[`niro.verifier.verify`][].
 """
 
 from niro.ir import infer
 from niro.ir.accessors import get_operands, get_regions, get_results
-from niro.ir.builder import BlockBuilder, FunctionBuilder, ModuleBuilder
 from niro.ir.data import AttributeName, Attributes, AttributeValue, Literal
 from niro.ir.ops import (
     Add,
@@ -45,7 +34,6 @@ from niro.ir.program import (
 )
 from niro.ir.types import Dimension, ScalarType, Shape, TensorType, Type
 from niro.ir.values import Value, ValueId
-from niro.ir.verifier import verify
 
 __all__ = [
     "Add",
@@ -53,12 +41,10 @@ __all__ = [
     "AttributeValue",
     "Attributes",
     "Block",
-    "BlockBuilder",
     "Call",
     "Const",
     "Dimension",
     "Function",
-    "FunctionBuilder",
     "FunctionType",
     "GetGlobal",
     "Global",
@@ -66,7 +52,6 @@ __all__ = [
     "Literal",
     "MatMul",
     "Module",
-    "ModuleBuilder",
     "Mul",
     "Op",
     "Region",
@@ -86,5 +71,4 @@ __all__ = [
     "get_regions",
     "get_results",
     "infer",
-    "verify",
 ]

@@ -1,4 +1,4 @@
-from niro import ir
+from niro import ir, verifier
 
 
 def test_function_arguments_come_from_entry_block() -> None:
@@ -40,4 +40,4 @@ def test_optional_interface_names() -> None:
 
     assert function.input_names == ("value", None)
     assert function.output_names == (None,)
-    assert ir.verify(ir.Module(functions=[function])).functions == [function]
+    assert verifier.verify(ir.Module(functions=[function])).functions == [function]

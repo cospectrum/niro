@@ -79,7 +79,7 @@ class Module:
 
 
 VerifiedModule = NewType("VerifiedModule", Module)
-"""A module that has passed [`niro.ir.verify`][].
+"""A module that has passed [`niro.verifier.verify`][].
 
 This is a static type marker, not an immutable snapshot. Verify again after
 changing the module.

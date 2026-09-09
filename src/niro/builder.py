@@ -1,7 +1,17 @@
 """Builders for constructing Niro IR programs.
 
-Start from [`ModuleBuilder`][niro.ir.builder.ModuleBuilder]; the nested builders
+Start from [`ModuleBuilder`][niro.builder.ModuleBuilder]; the nested builders
 are obtained from it rather than constructed directly.
+
+```python
+from niro import builder, ir
+
+module = builder.ModuleBuilder()
+function = module.function(name="main", type=ir.FunctionType((), ()))
+block = function.region().first_block()
+block.return_()
+verified_module = module.verify()
+```
 """
 
 from __future__ import annotations
@@ -9,7 +19,7 @@ from __future__ import annotations
 import builtins
 from collections.abc import Callable, Mapping, Sequence
 
-from niro import ir
+from niro import ir, verifier
 from niro.ir.data import AttributeName, AttributeValue, Literal
 from niro.ir.ops import (
     Add,
@@ -87,7 +97,7 @@ class ModuleBuilder(Builder[Module]):
 
     def verify(self) -> VerifiedModule:
         """Verify and return the module under construction."""
-        return ir.verify(self.raw)
+        return verifier.verify(self.raw)
 
     def function(
         self,
@@ -425,8 +435,8 @@ class IfBuilder(Builder[If]):
 
     Attributes:
         raw: The [`niro.ir.If`][] under construction.
-        then_region: The [`niro.ir.builder.IfRegionBuilder`][] for the taken branch.
-        else_region: The [`niro.ir.builder.IfRegionBuilder`][] for the other branch.
+        then_region: The [`niro.builder.IfRegionBuilder`][] for the taken branch.
+        else_region: The [`niro.builder.IfRegionBuilder`][] for the other branch.
     """
 
     def __init__(

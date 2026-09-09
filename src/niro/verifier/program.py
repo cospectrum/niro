@@ -7,24 +7,12 @@ from collections.abc import Iterator, Mapping
 from typing import assert_never
 
 from niro import ir
-from niro.ir.ops import (
-    Return,
-    Yield,
-)
-from niro.ir.program import (
-    Block,
-    Function,
-    Global,
-    Module,
-    Region,
-    SymbolName,
-    VerifiedModule,
-)
-from niro.ir.types import Type
-from niro.ir.values import Value, ValueId
-from niro.ir.verifier import ops as op_verifier
+from niro.ir.program import Module, VerifiedModule
+from niro.verifier.ops import _verify_op
 
 __all__ = ["verify"]
+
+type Terminator = ir.Return | ir.Yield
 
 
 def verify(module: Module) -> VerifiedModule:
@@ -37,7 +25,7 @@ def verify(module: Module) -> VerifiedModule:
     return ir.VerifiedModule(module)
 
 
-def _verify_symbol_names(module: Module) -> None:
+def _verify_symbol_names(module: ir.Module) -> None:
     names = [symbol.name for symbol in [*module.functions, *module.globals]]
     for name, count in Counter(names).items():
         if not name:
@@ -47,9 +35,9 @@ def _verify_symbol_names(module: Module) -> None:
 
 
 def _verify_function(
-    function: Function,
-    functions: Mapping[SymbolName, Function],
-    globals_: Mapping[SymbolName, Global],
+    function: ir.Function,
+    functions: Mapping[ir.SymbolName, ir.Function],
+    globals_: Mapping[ir.SymbolName, ir.Global],
 ) -> None:
     _verify_interface_names("input", function.input_names, len(function.type.inputs))
     _verify_interface_names("output", function.output_names, len(function.type.outputs))
@@ -78,7 +66,7 @@ def _verify_interface_names(
         raise ValueError(f"{kind} names cannot be empty")
 
 
-def _iter_defined_values(region: Region) -> Iterator[Value]:
+def _iter_defined_values(region: ir.Region) -> Iterator[ir.Value]:
     for block in region.blocks:
         yield from block.arguments
         for op in block.operations:
@@ -88,7 +76,7 @@ def _iter_defined_values(region: Region) -> Iterator[Value]:
                 yield from _iter_defined_values(op.else_region)
 
 
-def _verify_value_ids(region: Region) -> None:
+def _verify_value_ids(region: ir.Region) -> None:
     counts = Counter(value.id for value in _iter_defined_values(region))
     for value_id, count in counts.items():
         if count > 1:
@@ -96,14 +84,14 @@ def _verify_value_ids(region: Region) -> None:
 
 
 def _verify_region(
-    region: Region,
-    outer_scope: Mapping[ValueId, Type],
-    input_types: tuple[Type, ...],
-    output_types: tuple[Type, ...],
-    terminator: type[Return | Yield],
+    region: ir.Region,
+    outer_scope: Mapping[ir.ValueId, ir.Type],
+    input_types: tuple[ir.Type, ...],
+    output_types: tuple[ir.Type, ...],
+    terminator: type[Terminator],
     *,
-    functions: Mapping[SymbolName, Function],
-    globals_: Mapping[SymbolName, Global],
+    functions: Mapping[ir.SymbolName, ir.Function],
+    globals_: Mapping[ir.SymbolName, ir.Global],
 ) -> None:
     if not region.blocks:
         raise ValueError("region must contain a block")
@@ -123,13 +111,13 @@ def _verify_region(
 
 
 def _verify_block(
-    block: Block,
-    outer_scope: Mapping[ValueId, Type],
-    output_types: tuple[Type, ...],
-    terminator: type[Return | Yield],
+    block: ir.Block,
+    outer_scope: Mapping[ir.ValueId, ir.Type],
+    output_types: tuple[ir.Type, ...],
+    terminator: type[Terminator],
     *,
-    functions: Mapping[SymbolName, Function],
-    globals_: Mapping[SymbolName, Global],
+    functions: Mapping[ir.SymbolName, ir.Function],
+    globals_: Mapping[ir.SymbolName, ir.Global],
 ) -> None:
     scope = {**outer_scope, **{value.id: value.type for value in block.arguments}}
     if not block.operations or not isinstance(block.operations[-1], terminator):
@@ -142,7 +130,7 @@ def _verify_block(
             if operand.type != scope[operand.id]:
                 raise TypeError(f"value {operand.id} type differs from its definition")
 
-        op_verifier._verify_op(op)
+        _verify_op(op)
         match op:
             case ir.Return() | ir.Yield():
                 if index != len(block.operations) - 1 or not isinstance(op, terminator):

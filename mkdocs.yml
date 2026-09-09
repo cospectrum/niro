@@ -13,15 +13,15 @@ nav:
           - niro/index.md
           - ir:
               - niro/ir/index.md
-              - builder: niro/ir/builder.md
               - infer: niro/ir/infer.md
-              - verifier: niro/ir/verifier.md
               - accessors: niro/ir/accessors.md
               - types: niro/ir/types.md
               - values: niro/ir/values.md
               - program: niro/ir/program.md
               - ops: niro/ir/ops.md
               - data: niro/ir/data.md
+          - builder: niro/builder.md
+          - verifier: niro/verifier.md
           - onnx: niro/onnx.md
           - mlir: niro/mlir.md
 
