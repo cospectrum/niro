@@ -1,0 +1,6 @@
+::: niro.ir.verifier
+    options:
+      filters: public
+      heading_level: 1
+      show_root_full_path: true
+      show_root_heading: true
