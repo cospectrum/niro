@@ -19,7 +19,7 @@ from __future__ import annotations
 import builtins
 from collections.abc import Callable, Mapping, Sequence
 
-from niro import ir, verifier
+from niro import ir, verify
 from niro.ir.data import AttributeName, AttributeValue, Literal
 from niro.ir.ops import (
     Add,
@@ -97,7 +97,7 @@ class ModuleBuilder(Builder[Module]):
 
     def verify(self) -> VerifiedModule:
         """Verify and return the module under construction."""
-        return verifier.verify(self.raw)
+        return verify.module(self.raw)
 
     def function(
         self,

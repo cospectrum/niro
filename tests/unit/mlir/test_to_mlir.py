@@ -2,7 +2,7 @@ import pytest
 from xdsl.dialects import builtin, ml_program
 
 import niro
-from niro import builder, ir, verifier
+from niro import builder, ir, verify
 
 
 def test_lowers_tensor_add() -> None:
@@ -121,7 +121,7 @@ def test_lowers_if_and_yield() -> None:
     )
     module = ir.Module(functions=[function])
 
-    text = niro.format_mlir(niro.to_mlir(verifier.verify(module)))
+    text = niro.format_mlir(niro.to_mlir(verify.module(module)))
 
     assert "scf.if %0 -> (i1)" in text
     assert text.count("scf.yield %0 : i1") == 2

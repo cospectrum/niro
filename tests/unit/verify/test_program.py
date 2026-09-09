@@ -2,16 +2,16 @@ from typing import assert_type
 
 import pytest
 
-from niro import ir, verifier
+from niro import ir, verify
 
 
 def test_empty_module_can_be_verified_repeatedly() -> None:
     module = ir.Module()
 
-    verified = verifier.verify(module)
+    verified = verify.module(module)
     assert_type(verified, ir.VerifiedModule)
     assert verified is module
-    assert verifier.verify(module) is module
+    assert verify.module(module) is module
     assert module.functions == []
     assert module.globals == []
 
@@ -23,7 +23,7 @@ def test_declarations_need_no_body() -> None:
     )
     module = ir.Module(functions=[declaration])
 
-    assert verifier.verify(module) is module
+    assert verify.module(module) is module
     assert declaration.body is None
 
 
@@ -45,7 +45,7 @@ def test_value_ids_are_local_to_each_function() -> None:
         ]
     )
 
-    assert verifier.verify(module) is module
+    assert verify.module(module) is module
 
 
 def test_symbols_resolve_after_the_caller_is_constructed() -> None:
@@ -68,7 +68,7 @@ def test_symbols_resolve_after_the_caller_is_constructed() -> None:
     )
     module.globals.append(ir.Global("weight", ir.ScalarType.I32, 42))
 
-    assert verifier.verify(module) is module
+    assert verify.module(module) is module
     assert block.operations[0] is load
     assert block.operations[1] is call
 
@@ -111,7 +111,7 @@ def test_nested_branches_capture_outer_values_and_publish_only_if_results() -> N
     )
     module = ir.Module(functions=[function])
 
-    assert verifier.verify(module) is module
+    assert verify.module(module) is module
     assert block.operations[0] is outer
     assert outer.then_region.blocks[0].operations[1] is nested
 
@@ -139,11 +139,11 @@ def test_resultless_if_requires_else_block(with_else: bool) -> None:
     )
 
     if with_else:
-        assert verifier.verify(module) is module
+        assert verify.module(module) is module
         assert conditional.else_region is else_region
     else:
         with pytest.raises(ValueError, match="region must contain a block"):
-            verifier.verify(module)
+            verify.module(module)
 
 
 def test_unknown_operations_participate_in_value_scope() -> None:
@@ -162,7 +162,7 @@ def test_unknown_operations_participate_in_value_scope() -> None:
         ]
     )
 
-    assert verifier.verify(module) is module
+    assert verify.module(module) is module
 
 
 def _module_with_body(
@@ -208,7 +208,7 @@ def test_invalid_symbol_names(
     module = ir.Module(functions=functions, globals=globals_)
 
     with pytest.raises(ValueError, match=message):
-        verifier.verify(module)
+        verify.module(module)
 
 
 @pytest.mark.parametrize(
@@ -241,7 +241,7 @@ def test_duplicate_value_definitions(definition: str) -> None:
     module = _module_with_body([block], inputs)
 
     with pytest.raises(ValueError, match="duplicate value ID"):
-        verifier.verify(module)
+        verify.module(module)
 
 
 @pytest.mark.parametrize(
@@ -301,7 +301,7 @@ def test_invalid_function_structure(
     module = _module_with_body(blocks, inputs)
 
     with pytest.raises(error, match=message):
-        verifier.verify(module)
+        verify.module(module)
 
 
 @pytest.mark.parametrize(
@@ -369,7 +369,7 @@ def test_invalid_value_visibility(scenario: str) -> None:
     module = _module_with_body([block], inputs)
 
     with pytest.raises(error, match=message):
-        verifier.verify(module)
+        verify.module(module)
 
 
 @pytest.mark.parametrize(
@@ -429,7 +429,7 @@ def test_invalid_references_and_result_types(scenario: str) -> None:
     module.globals.append(ir.Global("weight", ir.ScalarType.I32, 42))
 
     with pytest.raises(error, match=message):
-        verifier.verify(module)
+        verify.module(module)
 
 
 @pytest.mark.parametrize(
@@ -486,7 +486,7 @@ def test_invalid_if_regions(scenario: str) -> None:
     )
 
     with pytest.raises(error, match=message):
-        verifier.verify(module)
+        verify.module(module)
 
 
 @pytest.mark.parametrize("with_body", [False, True])
@@ -509,7 +509,7 @@ def test_valid_interface_names(
     )
     module = ir.Module(functions=[function])
 
-    assert verifier.verify(module) is module
+    assert verify.module(module) is module
 
 
 @pytest.mark.parametrize("with_body", [False, True])
@@ -535,4 +535,4 @@ def test_invalid_interface_names(
     )
 
     with pytest.raises(ValueError, match=f"{kind} names.*{message}"):
-        verifier.verify(ir.Module(functions=[function]))
+        verify.module(ir.Module(functions=[function]))

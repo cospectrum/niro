@@ -8,21 +8,25 @@ from typing import assert_never
 
 from niro import ir
 from niro.ir.program import Module, VerifiedModule
-from niro.verifier.ops import _verify_op
+from niro.verify.ops import _verify_op
 
-__all__ = ["verify"]
+__all__ = ["module"]
 
 type Terminator = ir.Return | ir.Yield
 
 
-def verify(module: Module) -> VerifiedModule:
+def module(module_: Module) -> VerifiedModule:
     """Verify module structure, references, and operations; return the same module."""
-    _verify_symbol_names(module)
-    functions = {function.name: function for function in module.functions}
-    globals_ = {global_.name: global_ for global_ in module.globals}
-    for function in module.functions:
+    _verify_module(module_)
+    return ir.VerifiedModule(module_)
+
+
+def _verify_module(module_: ir.Module) -> None:
+    _verify_symbol_names(module_)
+    functions = {function.name: function for function in module_.functions}
+    globals_ = {global_.name: global_ for global_ in module_.globals}
+    for function in module_.functions:
         _verify_function(function, functions, globals_)
-    return ir.VerifiedModule(module)
 
 
 def _verify_symbol_names(module: ir.Module) -> None:

@@ -1,4 +1,4 @@
-::: niro.verifier
+::: niro.verify
     options:
       filters: public
       heading_level: 1

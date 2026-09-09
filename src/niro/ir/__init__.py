@@ -2,7 +2,7 @@
 values, program structure, operations, literals, and attributes.
 
 Construct programs with [`niro.builder`][] and verify them with
-[`niro.verifier.verify`][].
+[`niro.verify.module`][].
 """
 
 from niro.ir import infer
