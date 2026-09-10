@@ -51,6 +51,8 @@ does so before returning.
   combine their results in the caller instead of selecting behaviors with flags.
 - Name pass modules by subject or transformation and pass functions by action.
 - Prefer guard clauses and early returns over nesting.
+- Place public functions and methods before private helpers where possible,
+  keeping private helpers near the bottom of their module or class.
 - Every function and type defined under `src/` must have a docstring, including
   private helpers, methods, classes, and type aliases. For functions, explain
   what they do and return, and any non-obvious assumptions or side effects.
@@ -84,6 +86,7 @@ does so before returning.
 Be concise, introduce concepts before using them, and update affected docs and
 examples when APIs or behavior change. Keep shared content consistent.
 
+- Keep `CONTRIBUTING.md` as short as possible while preserving essential guidance.
 - `README.md` and `docs/index.md`: minimal overview, installation, basic usage,
   and links. Keep shared content synchronized, allowing site-specific formatting
   and links. Update only when existing content needs changing; do not add
