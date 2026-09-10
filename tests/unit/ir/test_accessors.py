@@ -111,3 +111,104 @@ def test_nested_regions_preserve_identity_and_are_not_flattened() -> None:
     assert ir.get_regions(nested)[0] is nested.then_region
     assert ir.get_operands(outer) == (condition,)
     assert ir.get_results(outer) == ()
+
+
+def test_iter_defined_values_preserves_depth_first_order_and_identity() -> None:
+    condition = ir.Value(ir.ValueId(0), ir.ScalarType.BOOL)
+    argument, result, nested_argument, nested_result, else_result, next_argument = (
+        ir.Value(ir.ValueId(index), ir.ScalarType.F32) for index in range(1, 7)
+    )
+    branch = ir.If(
+        (result,),
+        condition,
+        ir.Region(
+            [
+                ir.Block(
+                    arguments=(nested_argument,),
+                    operations=[
+                        ir.Add(nested_result, nested_argument, argument),
+                        ir.Yield((nested_result,)),
+                    ],
+                )
+            ]
+        ),
+        ir.Region(
+            [
+                ir.Block(
+                    operations=[ir.Const(else_result, 1.0), ir.Yield((else_result,))]
+                )
+            ]
+        ),
+    )
+    region = ir.Region(
+        [
+            ir.Block(arguments=(condition, argument), operations=[branch]),
+            ir.Block(arguments=(next_argument,), operations=[ir.Return((result,))]),
+        ]
+    )
+
+    expected = [
+        condition,
+        argument,
+        result,
+        nested_argument,
+        nested_result,
+        else_result,
+        next_argument,
+    ]
+    assert all(
+        actual is value
+        for actual, value in zip(ir.iter_defined_values(region), expected, strict=True)
+    )
+
+
+def test_iter_defined_values_preserves_repeated_and_multiple_results() -> None:
+    first = ir.Value(ir.ValueId(0), ir.ScalarType.F32)
+    second = ir.Value(ir.ValueId(1), ir.ScalarType.F32)
+    region = ir.Region(
+        [
+            ir.Block(
+                arguments=(first,),
+                operations=[ir.Call("callee", (first,), (second, first))],
+            )
+        ]
+    )
+
+    assert list(ir.iter_defined_values(region)) == [first, second, first]
+
+
+def test_iter_defined_values_ignores_operand_only_references() -> None:
+    external = ir.Value(ir.ValueId(0), ir.ScalarType.F32)
+    for region in (
+        ir.Region(),
+        ir.Region([ir.Block()]),
+        ir.Region([ir.Block(operations=[ir.Return((external,))])]),
+    ):
+        assert list(ir.iter_defined_values(region)) == []
+
+
+def test_iter_ops_preserves_depth_first_order_and_identity() -> None:
+    condition = ir.Value(ir.ValueId(0), ir.ScalarType.BOOL)
+    leaf = ir.Yield()
+    nested = ir.If((), condition, ir.Region([ir.Block(operations=[leaf])]), ir.Region())
+    then_end = ir.Yield()
+    else_end = ir.Yield()
+    outer = ir.If(
+        (),
+        condition,
+        ir.Region([ir.Block(operations=[nested, then_end])]),
+        ir.Region([ir.Block(operations=[else_end])]),
+    )
+    first = ir.Const(condition, True)
+    last = ir.Return()
+    region = ir.Region(
+        [ir.Block(operations=[first, outer]), ir.Block(operations=[last])]
+    )
+
+    expected = [first, outer, nested, leaf, then_end, else_end, last]
+    assert all(
+        actual is operation
+        for actual, operation in zip(ir.iter_ops(region), expected, strict=True)
+    )
+    assert list(ir.iter_ops(ir.Region())) == []
+    assert list(ir.iter_ops(ir.Region([ir.Block()]))) == []

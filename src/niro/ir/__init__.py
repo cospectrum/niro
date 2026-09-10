@@ -5,7 +5,13 @@ You can construct programs with [`niro.builder.ModuleBuilder`][].
 """
 
 from niro.ir import infer
-from niro.ir.accessors import get_operands, get_regions, get_results
+from niro.ir.accessors import (
+    get_operands,
+    get_regions,
+    get_results,
+    iter_defined_values,
+    iter_ops,
+)
 from niro.ir.data import AttributeName, Attributes, AttributeValue, Literal
 from niro.ir.ops import (
     Add,
@@ -70,4 +76,6 @@ __all__ = [
     "get_regions",
     "get_results",
     "infer",
+    "iter_defined_values",
+    "iter_ops",
 ]

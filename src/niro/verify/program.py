@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from typing import assert_never
 
 from niro import ir
@@ -70,18 +70,8 @@ def _verify_interface_names(
         raise ValueError(f"{kind} names cannot be empty")
 
 
-def _iter_defined_values(region: ir.Region) -> Iterator[ir.Value]:
-    for block in region.blocks:
-        yield from block.arguments
-        for op in block.operations:
-            yield from ir.get_results(op)
-            if isinstance(op, ir.If):
-                yield from _iter_defined_values(op.then_region)
-                yield from _iter_defined_values(op.else_region)
-
-
 def _verify_value_ids(region: ir.Region) -> None:
-    counts = Counter(value.id for value in _iter_defined_values(region))
+    counts = Counter(value.id for value in ir.iter_defined_values(region))
     for value_id, count in counts.items():
         if count > 1:
             raise ValueError(f"duplicate value ID in function: {value_id}")
