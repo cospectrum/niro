@@ -1,8 +1,10 @@
 """Check generated graphs against ONNX's checker and reference execution."""
 
 import math
+from collections.abc import Iterator
 
 import hypothesis
+import numpy as np
 import onnx
 import onnx.reference
 import pytest
@@ -10,6 +12,79 @@ from hypothesis import strategies as st
 from hypothesis.strategies import SearchStrategy
 
 from . import onnx as onnx_st
+
+
+@pytest.mark.parametrize("depth", (1, 2, 3))
+def test_if_generation_reaches_nested_depth(depth: int) -> None:
+    model = hypothesis.find(
+        onnx_st.models(
+            operators=(onnx_st.OPERATORS.if_,),
+            min_nodes=1,
+            max_nodes=1,
+            max_inputs=1,
+            max_initializers=0,
+            max_rank=0,
+            element_types=(onnx.TensorProto.BOOL,),
+            max_depth=depth,
+            max_branch_nodes=16,
+        ),
+        lambda model: _if_depth(model.graph) == depth,
+        settings=hypothesis.settings(max_examples=500, deadline=None),
+    )
+    assert_valid_and_executable(model)
+
+
+def test_if_branches_reuse_custom_operator_rules() -> None:
+    model = hypothesis.find(
+        onnx_st.models(
+            operators=(onnx_st.OPERATORS.if_, onnx_st.unary("Neg")),
+            min_nodes=1,
+            max_nodes=1,
+            max_seed_initializers=0,
+        ),
+        lambda model: any(
+            node.op_type == "Neg"
+            for graph in _subgraphs(model.graph)
+            for node in graph.node
+        ),
+        settings=hypothesis.settings(max_examples=500, deadline=None),
+    )
+    assert model.graph.node[0].op_type == "If"
+    assert_valid_and_executable(model)
+
+
+@hypothesis.given(
+    data=st.data(),
+    max_depth=st.integers(0, 3),
+    max_branch_nodes=st.integers(1, 9),
+)
+def test_recursive_graph_bounds(
+    data: st.DataObject,
+    max_depth: int,
+    max_branch_nodes: int,
+) -> None:
+    model = data.draw(
+        onnx_st.models(
+            max_nodes=4,
+            max_depth=max_depth,
+            max_branch_nodes=max_branch_nodes,
+            max_initializers=2,
+            max_seed_initializers=0,
+        )
+    )
+    assert _if_depth(model.graph) <= max_depth
+    for graph in _subgraphs(model.graph):
+        assert (
+            sum(len(descendant.node) for descendant in (graph, *_subgraphs(graph)))
+            <= max_branch_nodes
+        )
+        assert len(graph.initializer) <= 2
+        assert not graph.input
+        for value in (*graph.value_info, *graph.output):
+            shape = value.type.tensor_type.shape.dim
+            assert len(shape) <= 3
+            assert all(0 <= dimension.dim_value <= 4 for dimension in shape)
+    assert_valid_and_executable(model)
 
 
 @pytest.mark.parametrize("initializer_slots", (0, 1))
@@ -185,6 +260,8 @@ def test_models_without_nodes(model: onnx.ModelProto) -> None:
     "strategy",
     [
         onnx_st.models(max_nodes=-1),
+        onnx_st.models(max_depth=-1),
+        onnx_st.models(max_branch_nodes=0),
         onnx_st.models(max_inputs=-1),
         onnx_st.models(max_initializers=-1),
         onnx_st.models(max_outputs=0),
@@ -267,15 +344,59 @@ def assert_valid_and_executable(model: onnx.ModelProto) -> None:
         tensor = onnx.helper.make_tensor(value.name, type_.elem_type, shape, elements)
         feeds[value.name] = onnx.numpy_helper.to_array(tensor)
 
-    declared = {
-        value.name: value.type.tensor_type
-        for value in (*restored.graph.value_info, *restored.graph.output)
-    }
-    evaluator = onnx.reference.ReferenceEvaluator(restored)
-    results = evaluator.run(list(declared), feeds)
-    assert isinstance(results, list)
-    for type_, result in zip(declared.values(), results, strict=True):
+    _assert_graph_executable(
+        restored.graph,
+        feeds,
+        {opset.domain: opset.version for opset in restored.opset_import},
+    )
+
+
+def _assert_graph_executable(
+    graph: onnx.GraphProto,
+    feeds: dict[str, np.ndarray],
+    opsets: dict[str, int],
+) -> None:
+    """Execute every branch, including paths skipped by its enclosing condition."""
+    evaluator = onnx.reference.ReferenceEvaluator(graph, opsets=opsets)
+    results = evaluator.run(None, feeds, intermediate=True)
+    assert isinstance(results, dict)
+    for value in (*graph.value_info, *graph.output):
+        type_ = value.type.tensor_type
+        result = results[value.name]
         assert result.shape == tuple(
             dimension.dim_value for dimension in type_.shape.dim
         )
         assert result.dtype == onnx.helper.tensor_dtype_to_np_dtype(type_.elem_type)
+    for node in graph.node:
+        for attribute in node.attribute:
+            if attribute.type == onnx.AttributeProto.GRAPH:
+                _assert_graph_executable(attribute.g, results, opsets)
+
+
+def _subgraphs(graph: onnx.GraphProto) -> Iterator[onnx.GraphProto]:
+    """Visit child graphs recursively."""
+    for node in graph.node:
+        for attribute in node.attribute:
+            if attribute.type == onnx.AttributeProto.GRAPH:
+                yield attribute.g
+                yield from _subgraphs(attribute.g)
+
+
+def _if_depth(graph: onnx.GraphProto) -> int:
+    """Return the maximum number of nested If nodes."""
+    return max(
+        (
+            1
+            + max(
+                (
+                    _if_depth(attribute.g)
+                    for attribute in node.attribute
+                    if attribute.type == onnx.AttributeProto.GRAPH
+                ),
+                default=0,
+            )
+            for node in graph.node
+            if node.op_type == "If"
+        ),
+        default=0,
+    )

@@ -33,9 +33,13 @@ broadcasting; its optional `output_element_type` supports comparisons such as
 attributes or input-value restrictions. Select an operator and input types for
 which the construction rule is valid in the active opset.
 
-`OPERATORS.if_` draws a scalar Boolean condition and two single-Identity branches
-that capture tensors with matching types and shapes. Conditions reuse available
-scalars or consume an initializer slot when BOOL is enabled. Branches are not recursive.
+`OPERATORS.if_` draws a scalar Boolean condition and two generated branches
+with matching output types and shapes. Branches reuse the selected operator
+rules, capture visible outer values, and may contain nested If nodes. Conditions
+reuse available scalars or consume an initializer slot when BOOL is enabled.
+`models(max_depth=2, max_branch_nodes=6)` sets the default nesting and branch
+size limits; zero depth disables If. Branch outputs use Identity to bind a local
+result, even when returning a captured value.
 
 ## Writing an operator rule
 
@@ -117,6 +121,10 @@ The extension types support more than fixed-arity tensor operations:
 - `Context.initializer_slots` reports the remaining initializer budget.
   `Context.limits` gives rank and dimension bounds and random-source element types;
   `Context.opsets` gives imported domain versions.
+- `Context.max_depth` gives the remaining nesting depth. When supplied by the
+  assembler, `Context.subgraphs(name, output_types)` draws a bounded child graph
+  with those output types, each of which must have an available matching value.
+  Subgraph rules must honor the depth limit and use unique names.
 
 ## Bounds and validity
 
@@ -125,7 +133,11 @@ Use `max_seed_initializers=0` to reserve that budget for rules. Input-free rules
 such as Constant, can generate graphs with `max_inputs=0` and no seeded values.
 `min_nodes` requires at least that many nodes and raises if applicable rules
 cannot reach the count; generation may otherwise stop when no rule applies.
-Node bounds count top-level nodes.
+`min_nodes` and `max_nodes` count top-level nodes. `max_branch_nodes` counts all
+nodes in each generated If branch, including nested branches and output Identity
+nodes. Thus built-in models contain at most
+`max_nodes * (1 + 2 * max_branch_nodes)` nodes. Initializer budgets apply separately
+to each graph; branches inherit their enclosing context's available slots.
 
 Bounds cover random sources, concrete typed shapes, and auxiliary initializers.
 Rules own the validity and bounds of symbolic dimensions, nested graphs, and

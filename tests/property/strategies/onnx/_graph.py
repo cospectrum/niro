@@ -1,5 +1,6 @@
 """Assemble typed ONNX graphs from independent operator strategies."""
 
+import dataclasses
 import math
 from collections.abc import Mapping, Sequence
 
@@ -20,105 +21,6 @@ from ._core import (
 from ._operators import OPERATORS
 
 
-def _literals(element_type: int) -> SearchStrategy[bool | int | float]:
-    """Generate small, finite initializer elements representable in their type."""
-    if element_type == onnx.TensorProto.BOOL:
-        return st.booleans()
-    if element_type in (onnx.TensorProto.INT32, onnx.TensorProto.INT64):
-        return st.integers(-2, 2)
-    width = 32 if element_type == onnx.TensorProto.FLOAT else 64
-    return st.floats(-2, 2, allow_nan=False, allow_infinity=False, width=width)
-
-
-def _assert_type_bounds(type_: onnx.TypeProto, limits: Limits) -> None:
-    """Check concrete dimensions, including tensors nested in container types."""
-    kind = type_.WhichOneof("value")
-    assert kind is not None, "operator outputs must declare an ONNX type"
-    if kind in ("tensor_type", "sparse_tensor_type"):
-        tensor = (
-            type_.tensor_type if kind == "tensor_type" else type_.sparse_tensor_type
-        )
-        if tensor.HasField("shape"):
-            assert len(tensor.shape.dim) <= limits.max_rank, "tensor exceeds max_rank"
-            assert all(
-                0 <= dimension.dim_value <= limits.max_dim
-                for dimension in tensor.shape.dim
-                if dimension.HasField("dim_value")
-            ), "tensor exceeds max_dim"
-    elif kind == "sequence_type":
-        _assert_type_bounds(type_.sequence_type.elem_type, limits)
-    elif kind == "optional_type":
-        _assert_type_bounds(type_.optional_type.elem_type, limits)
-    elif kind == "map_type":
-        _assert_type_bounds(type_.map_type.value_type, limits)
-
-
-def _materialize(
-    operator: Operator, spec: NodeSpec, context: Context, index: int
-) -> tuple[onnx.NodeProto, list[Value], list[onnx.TensorProto]]:
-    """Allocate node names and copy a rule's outputs, attributes, and constants."""
-    names = {value.name for value in context.values}
-    inputs: list[str] = []
-    added_values: list[Value] = []
-    initializers: list[onnx.TensorProto] = []
-    for position, operand in enumerate(spec.inputs):
-        if operand is None:
-            inputs.append("")
-        elif isinstance(operand, str):
-            assert operand in names, f"operator references undefined value {operand!r}"
-            inputs.append(operand)
-        else:
-            assert len(initializers) < context.initializer_slots, (
-                "initializer budget exceeded"
-            )
-            initializer = onnx.TensorProto()
-            initializer.CopyFrom(operand)
-            initializer.name = f"node{index}_input{position}"
-            type_ = onnx.helper.make_tensor_type_proto(
-                initializer.data_type, initializer.dims
-            )
-            _assert_type_bounds(type_, context.limits)
-            initializers.append(initializer)
-            added_values.append(Value(initializer.name, type_))
-            inputs.append(initializer.name)
-
-    outputs: list[str] = []
-    for position, type_ in enumerate(spec.outputs):
-        if type_ is None:
-            outputs.append("")
-            continue
-        _assert_type_bounds(type_, context.limits)
-        copied_type = onnx.TypeProto()
-        copied_type.CopyFrom(type_)
-        value = Value(f"node{index}_output{position}", copied_type)
-        added_values.append(value)
-        outputs.append(value.name)
-    node = onnx.helper.make_node(
-        operator.op_type, inputs, outputs, name=f"node{index}", domain=operator.domain
-    )
-    node.attribute.extend(spec.attributes)
-    return node, added_values, initializers
-
-
-def _resolve_operators(
-    operators: Sequence[str | Operator] | None,
-) -> tuple[Operator, ...]:
-    """Resolve registered names while allowing independent caller-supplied rules."""
-    if operators is None:
-        return tuple(OPERATORS)
-    registry = {operator.op_type: operator for operator in OPERATORS}
-    resolved = []
-    for operator in operators:
-        if isinstance(operator, str):
-            if operator not in registry:
-                raise ValueError(
-                    f"unsupported operators: {operator!r}; supply an Operator rule"
-                )
-            operator = registry[operator]
-        resolved.append(operator)
-    return tuple(resolved)
-
-
 @st.composite
 def models(
     draw: DrawFn,
@@ -131,6 +33,8 @@ def models(
     max_outputs: int = 4,
     max_rank: int = 3,
     max_dim: int = 4,
+    max_depth: int = 2,
+    max_branch_nodes: int = 6,
     operators: Sequence[str | Operator] | None = None,
     element_types: Sequence[int] = ELEMENT_TYPES,
     opsets: Mapping[str, int] | None = None,
@@ -140,11 +44,16 @@ def models(
 
     Registered names and independent Operator objects can be mixed in
     ``operators``. The defaults retain Add, Mul, MatMul, Transpose, Identity,
-    and Relu. A rule returns a strategy for a valid NodeSpec or None when it
+    Relu, and If. A rule returns a strategy for a valid NodeSpec or None when it
     cannot apply. There is no filtering, shape repair, or checker invocation.
 
-    Bounds are nonnegative, max_outputs is positive, and min_nodes cannot
-    exceed max_nodes. Node bounds count top-level nodes. Generation stops when
+    max_depth bounds If nesting (zero disables If). max_branch_nodes bounds
+    each branch's total nodes, including descendants and output Identity nodes.
+    Branches reuse the active rules and visible values, with matching output
+    types and shapes. Their initializer budgets are local to each graph.
+
+    Bounds are nonnegative, max_outputs and max_branch_nodes are positive,
+    and min_nodes cannot exceed max_nodes. Node bounds count top-level nodes. Generation stops when
     no rule applies; failing to reach min_nodes raises ValueError. Initial
     values can be absent when an applicable zero-input rule supplies them.
 
@@ -164,10 +73,23 @@ def models(
     an explicit ir_version. This API enables extensions, not automatic coverage
     of every ONNX operator or validation of arbitrary caller-supplied rules.
     """
-    if min(min_nodes, max_nodes, max_inputs, max_initializers, max_rank, max_dim) < 0:
+    if (
+        min(
+            min_nodes,
+            max_nodes,
+            max_inputs,
+            max_initializers,
+            max_rank,
+            max_dim,
+            max_depth,
+        )
+        < 0
+    ):
         raise ValueError("model generation bounds must be nonnegative")
     if min_nodes > max_nodes:
         raise ValueError("min_nodes cannot exceed max_nodes")
+    if max_branch_nodes < 1:
+        raise ValueError("max_branch_nodes must be positive")
     if max_outputs < 1:
         raise ValueError("max_outputs must be positive")
     seed_limit = (
@@ -244,7 +166,9 @@ def models(
             max_initializers - len(initializers),
             versions,
             f"node{index}_nested",
+            max_depth=max_depth,
         )
+        context = _with_subgraphs(context, rules, max_branch_nodes)
         available = [
             (rule, strategy)
             for rule in rules
@@ -255,7 +179,7 @@ def models(
         rule, strategy = draw(st.sampled_from(available))
         spec = draw(strategy)
         node, added_values, added_initializers = _materialize(
-            rule, spec, context, index
+            rule, spec, context, f"node{index}"
         )
         nodes.append(node)
         values.extend(added_values)
@@ -292,4 +216,202 @@ def models(
         ir_version=ir_version,
         opset_imports=imports,
         producer_name="niro.property",
+    )
+
+
+def _literals(element_type: int) -> SearchStrategy[bool | int | float]:
+    """Generate small, finite initializer elements representable in their type."""
+    if element_type == onnx.TensorProto.BOOL:
+        return st.booleans()
+    if element_type in (onnx.TensorProto.INT32, onnx.TensorProto.INT64):
+        return st.integers(-2, 2)
+    width = 32 if element_type == onnx.TensorProto.FLOAT else 64
+    return st.floats(-2, 2, allow_nan=False, allow_infinity=False, width=width)
+
+
+def _assert_type_bounds(type_: onnx.TypeProto, limits: Limits) -> None:
+    """Check concrete dimensions, including tensors nested in container types."""
+    kind = type_.WhichOneof("value")
+    assert kind is not None, "operator outputs must declare an ONNX type"
+    if kind in ("tensor_type", "sparse_tensor_type"):
+        tensor = (
+            type_.tensor_type if kind == "tensor_type" else type_.sparse_tensor_type
+        )
+        if tensor.HasField("shape"):
+            assert len(tensor.shape.dim) <= limits.max_rank, "tensor exceeds max_rank"
+            assert all(
+                0 <= dimension.dim_value <= limits.max_dim
+                for dimension in tensor.shape.dim
+                if dimension.HasField("dim_value")
+            ), "tensor exceeds max_dim"
+    elif kind == "sequence_type":
+        _assert_type_bounds(type_.sequence_type.elem_type, limits)
+    elif kind == "optional_type":
+        _assert_type_bounds(type_.optional_type.elem_type, limits)
+    elif kind == "map_type":
+        _assert_type_bounds(type_.map_type.value_type, limits)
+
+
+def _materialize(
+    operator: Operator, spec: NodeSpec, context: Context, name: str
+) -> tuple[onnx.NodeProto, list[Value], list[onnx.TensorProto]]:
+    """Allocate node names and copy a rule's outputs, attributes, and constants."""
+    names = {value.name for value in context.values}
+    inputs: list[str] = []
+    added_values: list[Value] = []
+    initializers: list[onnx.TensorProto] = []
+    for position, operand in enumerate(spec.inputs):
+        if operand is None:
+            inputs.append("")
+        elif isinstance(operand, str):
+            assert operand in names, f"operator references undefined value {operand!r}"
+            inputs.append(operand)
+        else:
+            assert len(initializers) < context.initializer_slots, (
+                "initializer budget exceeded"
+            )
+            initializer = onnx.TensorProto()
+            initializer.CopyFrom(operand)
+            initializer.name = f"{name}_input{position}"
+            type_ = onnx.helper.make_tensor_type_proto(
+                initializer.data_type, initializer.dims
+            )
+            _assert_type_bounds(type_, context.limits)
+            initializers.append(initializer)
+            added_values.append(Value(initializer.name, type_))
+            inputs.append(initializer.name)
+
+    outputs: list[str] = []
+    for position, type_ in enumerate(spec.outputs):
+        if type_ is None:
+            outputs.append("")
+            continue
+        _assert_type_bounds(type_, context.limits)
+        copied_type = onnx.TypeProto()
+        copied_type.CopyFrom(type_)
+        value = Value(f"{name}_output{position}", copied_type)
+        added_values.append(value)
+        outputs.append(value.name)
+    node = onnx.helper.make_node(
+        operator.op_type, inputs, outputs, name=name, domain=operator.domain
+    )
+    node.attribute.extend(spec.attributes)
+    return node, added_values, initializers
+
+
+def _resolve_operators(
+    operators: Sequence[str | Operator] | None,
+) -> tuple[Operator, ...]:
+    """Resolve registered names while allowing independent caller-supplied rules."""
+    if operators is None:
+        return tuple(OPERATORS)
+    registry = {operator.op_type: operator for operator in OPERATORS}
+    resolved = []
+    for operator in operators:
+        if isinstance(operator, str):
+            if operator not in registry:
+                raise ValueError(
+                    f"unsupported operators: {operator!r}; supply an Operator rule"
+                )
+            operator = registry[operator]
+        resolved.append(operator)
+    return tuple(resolved)
+
+
+def _with_subgraphs(
+    context: Context, rules: tuple[Operator, ...], max_nodes: int
+) -> Context:
+    """Bind child graph generation without coupling operator rules to assembly."""
+
+    def subgraphs(
+        name: str, output_types: tuple[onnx.TypeProto, ...]
+    ) -> SearchStrategy[onnx.GraphProto]:
+        return _subgraphs(context, rules, name, output_types, max_nodes)
+
+    return dataclasses.replace(
+        context,
+        max_depth=context.max_depth if max_nodes else 0,
+        subgraphs=subgraphs,
+    )
+
+
+@st.composite
+def _subgraphs(
+    draw: DrawFn,
+    parent: Context,
+    rules: tuple[Operator, ...],
+    name: str,
+    output_types: tuple[onnx.TypeProto, ...],
+    max_nodes: int,
+) -> onnx.GraphProto:
+    """Generate a scoped graph, reserving local Identity outputs of target types."""
+    assert parent.max_depth > 0, "subgraph nesting budget exhausted"
+    assert max_nodes >= len(output_types)
+    assert all(
+        any(value.type == type_ for value in parent.values) for type_ in output_types
+    )
+    values = list(parent.values)
+    nodes: list[onnx.NodeProto] = []
+    initializers: list[onnx.TensorProto] = []
+    intermediates: list[onnx.ValueInfoProto] = []
+    remaining = max_nodes - len(output_types)
+    for index in range(draw(st.integers(0, remaining))):
+        if remaining == 0:
+            break
+        node_name = f"{name}_node{index}"
+        context = Context(
+            tuple(values),
+            parent.limits,
+            parent.initializer_slots - len(initializers),
+            parent.opsets,
+            f"{node_name}_nested",
+            max_depth=parent.max_depth - 1,
+        )
+        # An If consumes its own node plus two independently bounded branches.
+        context = _with_subgraphs(context, rules, (remaining - 1) // 2)
+        available = [
+            (rule, strategy)
+            for rule in rules
+            if (strategy := rule.strategy(context)) is not None
+        ]
+        if not available:
+            break
+        rule, strategy = draw(st.sampled_from(available))
+        node, added_values, added_initializers = _materialize(
+            rule, draw(strategy), context, node_name
+        )
+        cost = _node_count(node)
+        assert cost <= remaining, "operator exceeded the branch node budget"
+        remaining -= cost
+        nodes.append(node)
+        values.extend(added_values)
+        initializers.extend(added_initializers)
+        intermediates.extend(
+            onnx.helper.make_value_info(value.name, value.type)
+            for value in added_values
+        )
+    outputs = []
+    for index, type_ in enumerate(output_types):
+        value = draw(
+            st.sampled_from([value for value in values if value.type == type_])
+        )
+        output_name = f"{name}_result{index}"
+        nodes.append(onnx.helper.make_node("Identity", [value.name], [output_name]))
+        outputs.append(onnx.helper.make_value_info(output_name, type_))
+    return onnx.helper.make_graph(
+        nodes, name, [], outputs, initializer=initializers, value_info=intermediates
+    )
+
+
+def _node_count(node: onnx.NodeProto) -> int:
+    """Count an operation and all operations in its graph attributes."""
+    return 1 + sum(
+        _node_count(child)
+        for attribute in node.attribute
+        for graph in (
+            (attribute.g,)
+            if attribute.type == onnx.AttributeProto.GRAPH
+            else attribute.graphs
+        )
+        for child in graph.node
     )

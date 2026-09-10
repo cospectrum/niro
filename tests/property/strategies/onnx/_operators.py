@@ -221,6 +221,8 @@ def _transpose(context: Context) -> SearchStrategy[NodeSpec] | None:
 def _if(context: Context) -> SearchStrategy[NodeSpec] | None:
     """Choose a Boolean condition and branches capturing same-typed tensors."""
     _check_opset(context)
+    if context.max_depth == 0:
+        return None
     values = _tensors(context, ELEMENT_TYPES)
     conditions: list[SearchStrategy[str | onnx.TensorProto]] = [
         st.just(value.name)
@@ -250,25 +252,44 @@ def _ifs(
     values: tuple[Value, ...],
     conditions: SearchStrategy[str | onnx.TensorProto],
 ) -> NodeSpec:
-    """Draw two single-Identity branches with matching output types."""
+    """Draw bounded branches with matching outputs, falling back to captured values."""
     condition = draw(conditions)
-    then_value = draw(st.sampled_from(values))
-    else_value = draw(
-        st.sampled_from(
-            tuple(value for value in values if value.type == then_value.type)
-        )
-    )
-    attributes = []
-    for branch, value in (("then_branch", then_value), ("else_branch", else_value)):
-        name = f"{context.name_prefix}_{branch}_result"
-        graph = onnx.helper.make_graph(
-            [onnx.helper.make_node("Identity", [value.name], [name])],
+    output_type = draw(st.sampled_from(values)).type
+
+    def captured_graph(
+        name: str, output_types: tuple[onnx.TypeProto, ...]
+    ) -> SearchStrategy[onnx.GraphProto]:
+        return _captured_graphs(values, name, output_types)
+
+    subgraphs = context.subgraphs or captured_graph
+    attributes = tuple(
+        onnx.helper.make_attribute(
             branch,
-            [],
-            [onnx.helper.make_value_info(name, value.type)],
+            draw(subgraphs(f"{context.name_prefix}_{branch}", (output_type,))),
         )
-        attributes.append(onnx.helper.make_attribute(branch, graph))
-    return NodeSpec((condition,), (then_value.type,), tuple(attributes))
+        for branch in ("then_branch", "else_branch")
+    )
+    return NodeSpec((condition,), (output_type,), attributes)
+
+
+@st.composite
+def _captured_graphs(
+    draw: DrawFn,
+    values: tuple[Value, ...],
+    name: str,
+    output_types: tuple[onnx.TypeProto, ...],
+) -> onnx.GraphProto:
+    """Build minimal branches when a rule is used without a graph assembler."""
+    nodes = []
+    outputs = []
+    for index, type_ in enumerate(output_types):
+        value = draw(
+            st.sampled_from([value for value in values if value.type == type_])
+        )
+        output_name = f"{name}_result{index}"
+        nodes.append(onnx.helper.make_node("Identity", [value.name], [output_name]))
+        outputs.append(onnx.helper.make_value_info(output_name, type_))
+    return onnx.helper.make_graph(nodes, name, [], outputs)
 
 
 @dataclasses.dataclass(frozen=True)

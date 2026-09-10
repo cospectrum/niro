@@ -44,7 +44,9 @@ class Context:
 
     initializer_slots bounds additional tensor inputs. name_prefix is unique
     to the current node and can prefix names inside graph attributes. Rules
-    must not mutate available values or the opset mapping.
+    must not mutate available values or the opset mapping. max_depth bounds
+    remaining control-flow nesting. subgraphs optionally builds bounded child
+    graphs with requested output types and names, using the active operator rules.
     """
 
     values: tuple[Value, ...]
@@ -52,6 +54,11 @@ class Context:
     initializer_slots: int
     opsets: Mapping[str, int]
     name_prefix: str
+    max_depth: int = 1
+    subgraphs: (
+        Callable[[str, tuple[onnx.TypeProto, ...]], SearchStrategy[onnx.GraphProto]]
+        | None
+    ) = None
 
 
 @dataclass(frozen=True)

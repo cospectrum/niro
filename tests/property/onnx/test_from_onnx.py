@@ -1,6 +1,8 @@
 """Import valid ONNX graphs and preserve their typed dataflow and attributes."""
 
 import dataclasses
+import math
+from collections.abc import Iterator
 
 import hypothesis
 import numpy as np
@@ -45,14 +47,7 @@ def test_import_preserves_graph(unknown_only: bool, data: st.DataObject) -> None
 
 @hypothesis.given(data=st.data())
 def test_import_preserves_if_graph(data: st.DataObject) -> None:
-    model = data.draw(
-        onnx_st.models(
-            operators=(onnx_st.OPERATORS.if_,),
-            min_nodes=1,
-            max_initializers=3,
-            max_seed_initializers=0,
-        )
-    )
+    model = data.draw(_nested_if_models())
     onnx.checker.check_model(model, full_check=True)
     original = model.SerializeToString()
     module = niro.from_onnx(model)
@@ -82,7 +77,7 @@ def _assert_import_matches_graph(module: ir.Module, graph: onnx.GraphProto) -> N
     values = dict(
         zip((value.name for value in graph.input), block.arguments, strict=True)
     )
-    initializers = {tensor.name: tensor for tensor in graph.initializer}
+    initializers = {tensor.name: tensor for tensor in _initializers(graph)}
     assert {global_.name for global_ in module.globals} == set(initializers)
     for global_ in module.globals:
         tensor = initializers[global_.name]
@@ -96,7 +91,9 @@ def _assert_import_matches_graph(module: ir.Module, graph: onnx.GraphProto) -> N
             onnx.numpy_helper.to_array(tensor).reshape(-1),
         )
 
-    outputs = _assert_graph_body(block, graph, values, initializers)
+    outputs = _assert_graph_body(
+        block, graph, values, {tensor.name: tensor for tensor in graph.initializer}
+    )
     return_ = block.operations[-1]
     assert isinstance(return_, ir.Return)
     assert return_.operands == outputs
@@ -109,6 +106,10 @@ def _assert_graph_body(
     initializers: dict[str, onnx.TensorProto],
 ) -> tuple[ir.Value, ...]:
     """Compare nodes recursively and return the expected terminator operands."""
+    initializers = {
+        **initializers,
+        **{tensor.name: tensor for tensor in graph.initializer},
+    }
     types = {
         value.name: _tensor_type(value.type)
         for value in (*graph.value_info, *graph.output)
@@ -276,3 +277,76 @@ def _tensor_type(type_: onnx.TypeProto) -> ir.TensorType:
         element_types[tensor.elem_type],
         tuple(dim.dim_value for dim in tensor.shape.dim),
     )
+
+
+@st.composite
+def _nested_if_models(draw: DrawFn) -> onnx.ModelProto:
+    """Put generated If graphs inside another If to exercise nesting in every case."""
+    model = draw(
+        onnx_st.models(
+            operators=(onnx_st.OPERATORS.if_,),
+            min_nodes=1,
+            max_nodes=4,
+            max_outputs=1,
+            max_initializers=3,
+            max_seed_initializers=0,
+        )
+    )
+    branch = model.graph
+    inputs = list(branch.input)
+    del branch.input[:]
+    branch.value_info.add().CopyFrom(branch.output[0])
+    branch.node.append(
+        onnx.helper.make_node(
+            "Identity", [branch.output[0].name], ["outer_then_result"]
+        )
+    )
+    branch.output[0].name = "outer_then_result"
+    type_ = branch.output[0].type
+    tensor_type = type_.tensor_type
+    shape = tuple(dimension.dim_value for dimension in tensor_type.shape.dim)
+    other = onnx.helper.make_graph(
+        [
+            onnx.helper.make_node(
+                "Identity", ["outer_else_value"], ["outer_else_result"]
+            )
+        ],
+        "outer_else",
+        [],
+        [onnx.helper.make_value_info("outer_else_result", type_)],
+        initializer=[
+            onnx.helper.make_tensor(
+                "outer_else_value", tensor_type.elem_type, shape, [0] * math.prod(shape)
+            )
+        ],
+    )
+    graph = onnx.helper.make_graph(
+        [
+            onnx.helper.make_node(
+                "If",
+                ["outer_condition"],
+                ["outer_result"],
+                then_branch=branch,
+                else_branch=other,
+            )
+        ],
+        "main",
+        [
+            *inputs,
+            onnx.helper.make_tensor_value_info(
+                "outer_condition", onnx.TensorProto.BOOL, ()
+            ),
+        ],
+        [onnx.helper.make_value_info("outer_result", type_)],
+    )
+    model.graph.CopyFrom(graph)
+    return model
+
+
+def _initializers(graph: onnx.GraphProto) -> Iterator[onnx.TensorProto]:
+    """Visit initializers in every scope; generated names are globally unique."""
+    yield from graph.initializer
+    for node in graph.node:
+        for attribute in node.attribute:
+            if attribute.type == onnx.AttributeProto.GRAPH:
+                yield from _initializers(attribute.g)
