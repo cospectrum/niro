@@ -166,6 +166,21 @@ def _emit_operation(
                     *(_lookup_value(values, value) for value in operation.operands)
                 )
             )
+        case ir.TensorExtract():
+            indices = []
+            for index in operation.indices:
+                cast_index = arith.IndexCastOp(
+                    _lookup_value(values, index), builtin.IndexType()
+                )
+                block.add_op(cast_index)
+                indices.append(cast_index.result)
+            extract = tensor.ExtractOp(
+                _lookup_value(values, operation.operand),
+                indices,
+                _lower_type(operation.result.type),
+            )
+            block.add_op(extract)
+            values[operation.result.id] = extract.result
         case ir.If():
             lowered = scf.IfOp(
                 _lookup_value(values, operation.condition),

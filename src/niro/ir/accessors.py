@@ -56,6 +56,7 @@ from niro.ir.ops import (
     Mul,
     Op,
     Return,
+    TensorExtract,
     Transpose,
     UnknownOp,
     Yield,
@@ -241,6 +242,8 @@ def get_operands(op: Op) -> tuple[Value, ...]:
     match op:
         case Const() | GetGlobal():
             return ()
+        case TensorExtract():
+            return (op.operand, *op.indices)
         case Transpose(operand=operand):
             return (operand,)
         case Add(lhs=lhs, rhs=rhs) | Mul(lhs=lhs, rhs=rhs) | MatMul(lhs=lhs, rhs=rhs):
@@ -267,6 +270,7 @@ def get_results(op: Op) -> tuple[Value, ...]:
             Const(result=result)
             | GetGlobal(result=result)
             | Transpose(result=result)
+            | TensorExtract(result=result)
             | Add(result=result)
             | Mul(result=result)
             | MatMul(result=result)
@@ -285,10 +289,13 @@ def get_regions(op: Op) -> tuple[Region, ...]:
     match op:
         case If(then_region=then_region, else_region=else_region):
             return then_region, else_region
+        case UnknownOp(regions=regions):
+            return regions
         case (
             Const()
             | GetGlobal()
             | Transpose()
+            | TensorExtract()
             | Add()
             | Mul()
             | MatMul()
@@ -297,7 +304,6 @@ def get_regions(op: Op) -> tuple[Region, ...]:
             | CondBranch()
             | Return()
             | Yield()
-            | UnknownOp()
         ):
             return ()
         case _ as unreachable:
@@ -305,9 +311,9 @@ def get_regions(op: Op) -> tuple[Region, ...]:
 
 
 def get_successors(op: Op) -> tuple[Block, ...]:
-    """Return immediate branch targets, ordered true then false for CondBranch.
+    """Return successors in declaration order, true then false for CondBranch.
 
-    Preserve repeated targets. Non-branch operations have no successors;
+    Preserve repeated targets, including opaque operation successors;
     nested regions are not followed.
     """
     match op:
@@ -315,5 +321,7 @@ def get_successors(op: Op) -> tuple[Block, ...]:
             return (op.target,)
         case CondBranch():
             return op.true_target, op.false_target
+        case UnknownOp():
+            return op.successors
         case _:
             return ()

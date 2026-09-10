@@ -234,6 +234,8 @@ def with_operands(op: Op, operands: Sequence[Value]) -> Op:
     match op:
         case ir.Const() | ir.GetGlobal():
             return op
+        case ir.TensorExtract():
+            return dataclasses.replace(op, operand=operands[0], indices=operands[1:])
         case ir.Transpose():
             return dataclasses.replace(op, operand=operands[0])
         case ir.Add() | ir.Mul() | ir.MatMul():
@@ -306,10 +308,17 @@ def map_regions(op: Op, transform: Callable[[Region], Region]) -> Op:
             return dataclasses.replace(
                 op, then_region=regions[0], else_region=regions[1]
             )
+        case ir.UnknownOp():
+            if all(
+                left is right for left, right in zip(regions, op.regions, strict=True)
+            ):
+                return op
+            return dataclasses.replace(op, regions=regions)
         case (
             ir.Const()
             | ir.GetGlobal()
             | ir.Transpose()
+            | ir.TensorExtract()
             | ir.Add()
             | ir.Mul()
             | ir.MatMul()
@@ -318,7 +327,6 @@ def map_regions(op: Op, transform: Callable[[Region], Region]) -> Op:
             | ir.CondBranch()
             | ir.Return()
             | ir.Yield()
-            | ir.UnknownOp()
         ):
             return op
         case _ as unreachable:
@@ -389,6 +397,13 @@ def _remap_successors(op: ir.Op, targets: Mapping[ir.Block, ir.Block]) -> ir.Op:
                 op,
                 true_target=targets.get(op.true_target, op.true_target),
                 false_target=targets.get(op.false_target, op.false_target),
+            )
+        case ir.UnknownOp():
+            return dataclasses.replace(
+                op,
+                successors=tuple(
+                    targets.get(target, target) for target in op.successors
+                ),
             )
         case _:
             return op
@@ -901,6 +916,7 @@ def _with_results(op: ir.Op, results: tuple[ir.Value, ...]) -> ir.Op:
             ir.Const()
             | ir.GetGlobal()
             | ir.Transpose()
+            | ir.TensorExtract()
             | ir.Add()
             | ir.Mul()
             | ir.MatMul()

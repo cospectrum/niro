@@ -46,6 +46,19 @@ class Transpose:
 
 
 @dataclass(frozen=True, slots=True)
+class TensorExtract:
+    """Read an element from an immutable ranked tensor into a scalar SSA value.
+
+    Supply one integer scalar index per axis; indices must be in bounds at
+    execution. A rank-zero tensor needs no indices. The tensor is unchanged.
+    """
+
+    result: Value
+    operand: Value
+    indices: tuple[Value, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class Add:
     """Add numeric scalars or tensors elementwise, with identical operand/result types."""
 
@@ -123,7 +136,7 @@ class Return:
 
 @dataclass(frozen=True, slots=True)
 class Yield:
-    """End an [`If`][niro.ir.If] branch with values matching its result types."""
+    """End a nested region; If branches yield values matching the If result types."""
 
     operands: tuple[Value, ...] = ()
 
@@ -146,18 +159,27 @@ class If:
 
 @dataclass(frozen=True, slots=True)
 class UnknownOp:
-    """A structurally valid operation whose semantics are unknown to niro."""
+    """An opaque operation with attributes, owned regions, and CFG successors.
+
+    Regions may capture enclosing values and contain SSA control flow ending in
+    Yield or branches. Yield types and successor operand conventions are opaque.
+    An operation with successors terminates its block; targets belong to the
+    enclosing region. Empty regions are allowed.
+    """
 
     name: str
     operands: tuple[Value, ...]
     results: tuple[Value, ...]
     attributes: Attributes = field(default_factory=dict)
+    regions: tuple[Region, ...] = ()
+    successors: tuple[Block, ...] = ()
 
 
 Op = (
     Const
     | GetGlobal
     | Transpose
+    | TensorExtract
     | Add
     | Mul
     | MatMul

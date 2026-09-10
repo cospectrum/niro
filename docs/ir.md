@@ -180,7 +180,7 @@ A function body is a region. Some operations, such as `If`, also own nested
 regions. A nested region may use values visible at the containing operation.
 Values created inside it can leave only through results of that operation.
 
-A region has one or more blocks. Its first block is the entry; every other
+A region has one or more blocks, except opaque operations may own empty regions. Its first block is the entry; every other
 block must be reachable from it through branches. Branches stay in their
 immediately containing region and cannot target its entry block. Blocks and
 regions each have a unique owner. Function bodies allow loops, including loops
@@ -210,8 +210,8 @@ An external function has no body and therefore no entry block or block
 arguments. All blocks in a function share its value-ID namespace.
 
 Other blocks receive their arguments from incoming branches. Each block ends
-with `Branch`, `CondBranch`, or the exit terminator required by its region:
-`Return` for function bodies and `Yield` for `If` regions. A terminator must
+with `Branch`, `CondBranch`, an `UnknownOp` with successors, or the exit terminator required by its region:
+`Return` for function bodies and `Yield` for nested regions. A terminator must
 be the last operation in its block.
 
 ### `Op`
@@ -223,6 +223,7 @@ type Op = (
     Const
     | GetGlobal
     | Transpose
+    | TensorExtract
     | Add
     | Mul
     | MatMul
@@ -397,6 +398,20 @@ the region. Unlike `Return`, it does not return from the function:
 yield_op = Yield(operands=(result,))
 ```
 
+### `TensorExtract`
+
+`TensorExtract` reads one element of an immutable ranked tensor and returns its
+scalar element type. It leaves the tensor unchanged. Supply one `I32` or `I64`
+scalar index per axis; indices must be in bounds at execution. A rank-zero tensor
+needs no indices:
+
+```python
+extract = TensorExtract(result=scalar, operand=tensor, indices=())
+```
+
+For example, extracting from `TensorType(BOOL, ())` produces `BOOL`, suitable
+as an `If` condition.
+
 ### `If`
 
 `If` selects one of two single-block regions using a scalar boolean condition
@@ -432,9 +447,16 @@ unknown = UnknownOp(
 )
 ```
 
-An unknown operation still has a complete SSA interface and follows the normal
-scope and uniqueness rules. A backend may preserve it as a custom operation or
-reject it with a clear diagnostic.
+Optional `regions` and `successors` tuples preserve nested structure and CFG
+edges. Regions have unique ownership, may capture enclosing values, and may be
+empty. Nonempty regions follow SSA dominance rules and exit through `Yield` or
+branches. Yield signatures and successor operand conventions remain opaque.
+An unknown operation with successors terminates its block; targets must belong
+to the enclosing region and cannot be its entry block.
+
+An unknown operation still has a complete SSA interface and follows normal scope
+and uniqueness rules. A backend may preserve it as a custom operation or reject
+it with a clear diagnostic; the current MLIR backend rejects unknown operations.
 
 ## Complete example
 

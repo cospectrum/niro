@@ -12,30 +12,73 @@ from hypothesis.strategies import SearchStrategy
 from . import onnx as onnx_st
 
 
-def assert_valid_and_executable(model: onnx.ModelProto) -> None:
-    """Check serialized validity and the actual type and shape of every result."""
-    restored = onnx.load_model_from_string(model.SerializeToString())
-    onnx.checker.check_model(restored, full_check=True)
-    feeds = {}
-    for value in restored.graph.input:
-        type_ = value.type.tensor_type
-        shape = tuple(dimension.dim_value for dimension in type_.shape.dim)
-        elements = [index % 5 - 2 for index in range(math.prod(shape))]
-        tensor = onnx.helper.make_tensor(value.name, type_.elem_type, shape, elements)
-        feeds[value.name] = onnx.numpy_helper.to_array(tensor)
-
-    declared = {
-        value.name: value.type.tensor_type
-        for value in (*restored.graph.value_info, *restored.graph.output)
-    }
-    evaluator = onnx.reference.ReferenceEvaluator(restored)
-    results = evaluator.run(list(declared), feeds)
-    assert isinstance(results, list)
-    for type_, result in zip(declared.values(), results, strict=True):
-        assert result.shape == tuple(
-            dimension.dim_value for dimension in type_.shape.dim
+@pytest.mark.parametrize("initializer_slots", (0, 1))
+@hypothesis.given(data=st.data())
+def test_if_branches(data: st.DataObject, initializer_slots: int) -> None:
+    tensor_type = onnx.helper.make_tensor_type_proto(onnx.TensorProto.FLOAT, (2,))
+    bool_type = onnx.helper.make_tensor_type_proto(onnx.TensorProto.BOOL, ())
+    values = (onnx_st.Value("left", tensor_type), onnx_st.Value("right", tensor_type))
+    if initializer_slots == 0:
+        values += (onnx_st.Value("condition", bool_type),)
+    context = onnx_st.Context(
+        values=values,
+        limits=onnx_st.Limits(1, 2, onnx_st.ELEMENT_TYPES),
+        initializer_slots=initializer_slots,
+        opsets={"": 14},
+        name_prefix="if_test",
+    )
+    strategy = onnx_st.OPERATORS.if_.strategy(context)
+    assert strategy is not None
+    spec = data.draw(strategy)
+    condition = spec.inputs[0]
+    initializers = []
+    if isinstance(condition, onnx.TensorProto):
+        initializer = onnx.TensorProto()
+        initializer.CopyFrom(condition)
+        initializer.name = "condition"
+        initializers.append(initializer)
+        condition = initializer.name
+    assert isinstance(condition, str)
+    node = onnx.helper.make_node("If", [condition], ["result"])
+    node.attribute.extend(spec.attributes)
+    output_type = spec.outputs[0]
+    assert output_type is not None
+    graph = onnx.helper.make_graph(
+        [node],
+        "if_test",
+        [onnx.helper.make_value_info(value.name, value.type) for value in values],
+        [onnx.helper.make_value_info("result", output_type)],
+        initializer=initializers,
+    )
+    model = onnx.helper.make_model(
+        graph, opset_imports=[onnx.helper.make_opsetid("", 14)]
+    )
+    onnx.checker.check_model(model, full_check=True)
+    for predicate in (False, True):
+        feeds = {
+            name: onnx.numpy_helper.to_array(
+                onnx.helper.make_tensor(name, elem_type, shape, contents)
+            )
+            for name, elem_type, shape, contents in (
+                ("left", onnx.TensorProto.FLOAT, (2,), (1, 2)),
+                ("right", onnx.TensorProto.FLOAT, (2,), (3, 4)),
+                ("condition", onnx.TensorProto.BOOL, (), (predicate,)),
+            )
+        }
+        if initializers:
+            predicate = bool(onnx.numpy_helper.to_array(initializers[0]).item())
+            del feeds["condition"]
+        branch_name = "then_branch" if predicate else "else_branch"
+        branch = next(
+            attribute.g
+            for attribute in spec.attributes
+            if attribute.name == branch_name
         )
-        assert result.dtype == onnx.helper.tensor_dtype_to_np_dtype(type_.elem_type)
+        expected = feeds[branch.node[0].input[0]]
+        results = onnx.reference.ReferenceEvaluator(model).run(None, feeds)
+        assert isinstance(results, list)
+        result = results[0]
+        assert (result == expected).all()
 
 
 @hypothesis.given(onnx_st.models())
@@ -210,3 +253,29 @@ def test_rejects_incompatible_versions(data: st.DataObject) -> None:
         data.draw(onnx_st.models(opsets={"": 13}, min_nodes=1))
     with pytest.raises(ValueError, match="Unsupported opset-version"):
         data.draw(onnx_st.models(opsets={"": 999}))
+
+
+def assert_valid_and_executable(model: onnx.ModelProto) -> None:
+    """Check serialized validity and the actual type and shape of every result."""
+    restored = onnx.load_model_from_string(model.SerializeToString())
+    onnx.checker.check_model(restored, full_check=True)
+    feeds = {}
+    for value in restored.graph.input:
+        type_ = value.type.tensor_type
+        shape = tuple(dimension.dim_value for dimension in type_.shape.dim)
+        elements = [index % 5 - 2 for index in range(math.prod(shape))]
+        tensor = onnx.helper.make_tensor(value.name, type_.elem_type, shape, elements)
+        feeds[value.name] = onnx.numpy_helper.to_array(tensor)
+
+    declared = {
+        value.name: value.type.tensor_type
+        for value in (*restored.graph.value_info, *restored.graph.output)
+    }
+    evaluator = onnx.reference.ReferenceEvaluator(restored)
+    results = evaluator.run(list(declared), feeds)
+    assert isinstance(results, list)
+    for type_, result in zip(declared.values(), results, strict=True):
+        assert result.shape == tuple(
+            dimension.dim_value for dimension in type_.shape.dim
+        )
+        assert result.dtype == onnx.helper.tensor_dtype_to_np_dtype(type_.elem_type)

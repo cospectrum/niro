@@ -28,6 +28,14 @@ def _verify_op(op: Op) -> None:
             expected = ir.infer.transpose_result_type(op.operand.type, op.permutation)
             if op.result.type != expected:
                 raise TypeError("transpose result type does not match its operands")
+        case ir.TensorExtract():
+            expected = ir.infer.tensor_extract_result_type(
+                op.operand.type, tuple(index.type for index in op.indices)
+            )
+            if op.result.type != expected:
+                raise TypeError(
+                    "tensor extract result type must match the element type"
+                )
         case ir.If():
             if op.condition.type is not ir.ScalarType.BOOL:
                 raise TypeError("if condition must be boolean")

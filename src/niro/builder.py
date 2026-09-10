@@ -362,8 +362,15 @@ class BlockBuilder(Builder[Block]):
         operands: Sequence[Value] = (),
         result_types: Sequence[Type] = (),
         attributes: Mapping[AttributeName, AttributeValue] | None = None,
+        regions: Sequence[Region] = (),
+        successors: Sequence[Block] = (),
     ) -> tuple[Value, ...]:
-        """Append an unknown operation and return its results."""
+        """Append an opaque operation and return its results.
+
+        Regions are adopted without copying and must have unique ownership.
+        Successors reference blocks in the current region and make this operation
+        a terminator. Callers construct region values with function-unique IDs.
+        """
         operands = tuple(operands)
 
         def create(results: tuple[Value, ...]) -> UnknownOp:
@@ -373,10 +380,25 @@ class BlockBuilder(Builder[Block]):
                 operands=operands,
                 results=results,
                 attributes=dict(attributes or {}),
+                regions=tuple(regions),
+                successors=tuple(successors),
             )
 
         op = self._append_operation(result_types, create)
         return op.results
+
+    def tensor_extract(self, operand: Value, indices: Sequence[Value] = ()) -> Value:
+        """Read a tensor element as a scalar, preserving the immutable tensor."""
+        indices = tuple(indices)
+        result_type = ir.infer.tensor_extract_result_type(
+            operand.type, tuple(index.type for index in indices)
+        )
+
+        def create(results: tuple[Value, ...]) -> ir.TensorExtract:
+            """Return an element read defining the allocated scalar result."""
+            return ir.TensorExtract(results[0], operand, indices)
+
+        return self._append_operation([result_type], create).result
 
     def if_(
         self,

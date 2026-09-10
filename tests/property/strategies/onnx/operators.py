@@ -218,22 +218,72 @@ def _transpose(context: Context) -> SearchStrategy[NodeSpec] | None:
     return _transposes(values)
 
 
+def _if(context: Context) -> SearchStrategy[NodeSpec] | None:
+    """Choose a Boolean condition and branches capturing same-typed tensors."""
+    _check_opset(context)
+    values = _tensors(context, ELEMENT_TYPES)
+    conditions: list[SearchStrategy[str | onnx.TensorProto]] = [
+        st.just(value.name)
+        for value in _tensors(context, (onnx.TensorProto.BOOL,))
+        if tensor_shape(value) == ()
+    ]
+    if (
+        context.initializer_slots > 0
+        and onnx.TensorProto.BOOL in context.limits.element_types
+    ):
+        conditions.append(
+            st.booleans().map(
+                lambda value: onnx.helper.make_tensor(
+                    "", onnx.TensorProto.BOOL, (), (value,)
+                )
+            )
+        )
+    if not values or not conditions:
+        return None
+    return _ifs(context, values, st.one_of(conditions))
+
+
+@st.composite
+def _ifs(
+    draw: DrawFn,
+    context: Context,
+    values: tuple[Value, ...],
+    conditions: SearchStrategy[str | onnx.TensorProto],
+) -> NodeSpec:
+    """Draw two single-Identity branches with matching output types."""
+    condition = draw(conditions)
+    then_value = draw(st.sampled_from(values))
+    else_value = draw(
+        st.sampled_from(
+            tuple(value for value in values if value.type == then_value.type)
+        )
+    )
+    attributes = []
+    for branch, value in (("then_branch", then_value), ("else_branch", else_value)):
+        name = f"{context.name_prefix}_{branch}_result"
+        graph = onnx.helper.make_graph(
+            [onnx.helper.make_node("Identity", [value.name], [name])],
+            branch,
+            [],
+            [onnx.helper.make_value_info(name, value.type)],
+        )
+        attributes.append(onnx.helper.make_attribute(branch, graph))
+    return NodeSpec((condition,), (then_value.type,), tuple(attributes))
+
+
 @dataclasses.dataclass(frozen=True)
 class _OperatorRegistry:
     """Default rules with type-checked fields and iteration in declaration order."""
 
-    add: Operator = dataclasses.field(default_factory=lambda: broadcast_binary("Add"))
-    mul: Operator = dataclasses.field(default_factory=lambda: broadcast_binary("Mul"))
-    matmul: Operator = dataclasses.field(
-        default_factory=lambda: Operator("MatMul", _matmul)
-    )
-    transpose: Operator = dataclasses.field(
-        default_factory=lambda: Operator("Transpose", _transpose)
-    )
+    add: Operator = dataclasses.field(default=broadcast_binary("Add"))
+    mul: Operator = dataclasses.field(default=broadcast_binary("Mul"))
+    matmul: Operator = dataclasses.field(default=Operator("MatMul", _matmul))
+    transpose: Operator = dataclasses.field(default=Operator("Transpose", _transpose))
     identity: Operator = dataclasses.field(
-        default_factory=lambda: unary("Identity", element_types=ELEMENT_TYPES)
+        default=unary("Identity", element_types=ELEMENT_TYPES)
     )
-    relu: Operator = dataclasses.field(default_factory=lambda: unary("Relu"))
+    relu: Operator = dataclasses.field(default=unary("Relu"))
+    if_: Operator = dataclasses.field(default=Operator("If", _if))
 
     def __iter__(self) -> Iterator[Operator]:
         """Yield each declared rule without maintaining a separate operator list."""

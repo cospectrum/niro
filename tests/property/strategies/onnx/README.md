@@ -1,7 +1,7 @@
 # ONNX model strategies
 
 `models()` builds bounded ONNX graphs with Hypothesis. The default registry,
-`OPERATORS`, contains Add, Mul, MatMul, Transpose, Identity, and Relu. Its frozen
+`OPERATORS`, contains Add, Mul, MatMul, Transpose, Identity, Relu, and If. Its frozen
 fields provide type-checked access, such as `OPERATORS.matmul`. Iteration and
 string lookup derive from those fields, so adding a default rule requires one
 field declaration. String selection in `models()` remains supported. Pass an
@@ -32,6 +32,10 @@ broadcasting; its optional `output_element_type` supports comparisons such as
 `Less`. These factories use standard-domain opsets 14 and newer and require no
 attributes or input-value restrictions. Select an operator and input types for
 which the construction rule is valid in the active opset.
+
+`OPERATORS.if_` draws a scalar Boolean condition and two single-Identity branches
+that capture tensors with matching types and shapes. Conditions reuse available
+scalars or consume an initializer slot when BOOL is enabled. Branches are not recursive.
 
 ## Writing an operator rule
 

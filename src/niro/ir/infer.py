@@ -14,7 +14,7 @@ transposed_type = ir.infer.transpose_result_type(result_type, (1, 0))
 """
 
 from niro import ir
-from niro.ir.types import TensorType, Type
+from niro.ir.types import ScalarType, TensorType, Type
 
 
 def transpose_result_type(
@@ -51,3 +51,14 @@ def matmul_result_type(lhs: Type, rhs: Type) -> TensorType:
     if lhs_inner is not None and rhs_inner is not None and lhs_inner != rhs_inner:
         raise ValueError("matmul contracting dimensions must match")
     return ir.TensorType(lhs.element_type, (lhs.shape[0], rhs.shape[1]))
+
+
+def tensor_extract_result_type(operand: Type, indices: tuple[Type, ...]) -> ScalarType:
+    """Infer an element read, requiring a ranked tensor and one integer per axis."""
+    if not isinstance(operand, ir.TensorType) or operand.shape is None:
+        raise TypeError("tensor extract operand must be a ranked tensor")
+    if len(indices) != len(operand.shape):
+        raise ValueError("tensor extract requires one index per axis")
+    if any(index not in (ir.ScalarType.I32, ir.ScalarType.I64) for index in indices):
+        raise TypeError("tensor extract indices must be integer scalars")
+    return operand.element_type
