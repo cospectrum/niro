@@ -47,6 +47,8 @@ does so before returning.
   Use behavior-owning classes only for shared mutable state (builders, value
   allocators) or resource lifecycles; avoid inheritance and classes that merely
   group functions.
+- Prefer composition over flag-controlled behavior: use focused functions and
+  combine their results in the caller instead of selecting behaviors with flags.
 - Name pass modules by subject or transformation and pass functions by action.
 - Prefer guard clauses and early returns over nesting.
 - Every function and type defined under `src/` must have a docstring, including

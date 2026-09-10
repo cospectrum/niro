@@ -14,6 +14,122 @@ from niro import ir, verify
 
 from ..strategies import onnx as graphs
 
+# ONNX op name -> Niro op type.
+_SUPPORTED_OP_TYPES: dict[str, type[ir.Op]] = {
+    "Add": ir.Add,
+    "Mul": ir.Mul,
+    "MatMul": ir.MatMul,
+    "Transpose": ir.Transpose,
+}
+
+
+@pytest.mark.parametrize("unknown_only", [False, True], ids=["mixed", "unknown"])
+@hypothesis.given(data=st.data())
+def test_import_preserves_graph(unknown_only: bool, data: st.DataObject) -> None:
+    operators = _unknown_operators()
+    if not unknown_only:
+        operators = _native_operators() + operators
+    model = data.draw(graphs.models(operators=operators, min_nodes=1))
+    onnx.checker.check_model(model, full_check=True)
+    original = model.SerializeToString()
+
+    module = niro.from_onnx(model)
+
+    assert model.SerializeToString() == original
+    assert verify.module(module) is module
+    _assert_import_matches_graph(module, model.graph)
+    for node in model.graph.node:
+        hypothesis.event(f"operator={node.op_type}")
+
+
+def _assert_import_matches_graph(module: ir.Module, graph: onnx.GraphProto) -> None:
+    """Check signatures, initializer contents, typed dataflow, attributes, and returns.
+
+    The graph must use concrete tensor types, with value_info for node outputs,
+    and the native or opaque operators supported by the importer property tests.
+    """
+    (function,) = module.functions
+    assert function.name == graph.name
+    assert function.input_names == tuple(value.name for value in graph.input)
+    assert function.output_names == tuple(value.name for value in graph.output)
+    assert function.type.inputs == tuple(
+        _tensor_type(value.type) for value in graph.input
+    )
+    assert function.type.outputs == tuple(
+        _tensor_type(value.type) for value in graph.output
+    )
+    assert function.body is not None
+    (block,) = function.body.blocks
+    values = dict(zip(function.input_names, block.arguments, strict=True))
+    types = {value.name: _tensor_type(value.type) for value in graph.value_info}
+    initializers = {tensor.name: tensor for tensor in graph.initializer}
+    assert {global_.name for global_ in module.globals} == set(initializers)
+    for global_ in module.globals:
+        tensor = initializers[global_.name]
+        assert global_.type == _tensor_type(
+            onnx.helper.make_tensor_type_proto(tensor.data_type, tensor.dims)
+        )
+        assert isinstance(global_.initializer, bytes)
+        dtype = onnx.helper.tensor_dtype_to_np_dtype(tensor.data_type).newbyteorder("<")
+        np.testing.assert_array_equal(
+            np.frombuffer(global_.initializer, dtype=dtype),
+            onnx.numpy_helper.to_array(tensor).reshape(-1),
+        )
+
+    nodes = iter(graph.node)
+    for operation in block.operations[:-1]:
+        if isinstance(operation, ir.GetGlobal):
+            assert operation.name in initializers
+            assert operation.name not in values
+            values[operation.name] = operation.result
+            continue
+        node = next(nodes)
+        assert isinstance(operation, _SUPPORTED_OP_TYPES.get(node.op_type, ir.UnknownOp))
+        assert ir.get_operands(operation) == tuple(values[name] for name in node.input)
+        results = ir.get_results(operation)
+        assert tuple(result.type for result in results) == tuple(
+            types[name] for name in node.output
+        )
+        values.update(zip(node.output, results, strict=True))
+        attributes = {
+            attribute.name: onnx.helper.get_attribute_value(attribute)
+            for attribute in node.attribute
+        }
+        if isinstance(operation, ir.UnknownOp):
+            assert operation.name == f"{node.domain or 'onnx'}.{node.op_type}"
+            assert operation.attributes == attributes
+        elif isinstance(operation, ir.Transpose):
+            rank = len(types[node.output[0]].shape or ())
+            assert operation.permutation == tuple(
+                attributes.get("perm", reversed(range(rank)))
+            )
+    assert next(nodes, None) is None
+    return_ = block.operations[-1]
+    assert isinstance(return_, ir.Return)
+    assert return_.operands == tuple(values[name] for name in function.output_names)
+
+
+def _unknown_operators() -> tuple[graphs.Operator, ...]:
+    """Return generation rules for operators imported as UnknownOp."""
+    return (
+        graphs.OPERATORS["Identity"],
+        graphs.OPERATORS["Relu"],
+        graphs.unary("Neg"),
+        graphs.broadcast_binary("Sub"),
+        graphs.broadcast_binary("Less", output_element_type=onnx.TensorProto.BOOL),
+        graphs.Operator("TopK", _top_k),
+    )
+
+
+def _native_operators() -> tuple[graphs.Operator, ...]:
+    """Return generation rules within Niro's supported native operator subset."""
+    return (
+        graphs.Operator("Add", _same_type_binary),
+        graphs.Operator("Mul", _same_type_binary),
+        graphs.Operator("MatMul", _matrix_multiply),
+        graphs.OPERATORS["Transpose"],
+    )
+
 
 def _same_type_binary(
     context: graphs.Context,
@@ -85,28 +201,6 @@ def _top_k(context: graphs.Context) -> SearchStrategy[graphs.NodeSpec] | None:
     return _top_k_nodes(values) if values else None
 
 
-UNKNOWN_OPERATORS = (
-    graphs.OPERATORS["Identity"],
-    graphs.OPERATORS["Relu"],
-    graphs.unary("Neg"),
-    graphs.broadcast_binary("Sub"),
-    graphs.broadcast_binary("Less", output_element_type=onnx.TensorProto.BOOL),
-    graphs.Operator("TopK", _top_k),
-)
-NATIVE_OPERATORS = (
-    graphs.Operator("Add", _same_type_binary),
-    graphs.Operator("Mul", _same_type_binary),
-    graphs.Operator("MatMul", _matrix_multiply),
-    graphs.OPERATORS["Transpose"],
-)
-NATIVE_TYPES = {
-    "Add": ir.Add,
-    "Mul": ir.Mul,
-    "MatMul": ir.MatMul,
-    "Transpose": ir.Transpose,
-}
-
-
 def _tensor_type(type_: onnx.TypeProto) -> ir.TensorType:
     element_types: dict[int, ir.ScalarType] = {
         onnx.TensorProto.FLOAT: ir.ScalarType.F32,
@@ -120,79 +214,3 @@ def _tensor_type(type_: onnx.TypeProto) -> ir.TensorType:
         element_types[tensor.elem_type],
         tuple(dim.dim_value for dim in tensor.shape.dim),
     )
-
-
-@pytest.mark.parametrize("unknown_only", [False, True], ids=["mixed", "unknown"])
-@hypothesis.given(data=st.data())
-def test_import_preserves_graph(unknown_only: bool, data: st.DataObject) -> None:
-    operators = (
-        UNKNOWN_OPERATORS if unknown_only else (*NATIVE_OPERATORS, *UNKNOWN_OPERATORS)
-    )
-    model = data.draw(graphs.models(operators=operators, min_nodes=1))
-    onnx.checker.check_model(model, full_check=True)
-    original = model.SerializeToString()
-
-    module = niro.from_onnx(model)
-
-    assert model.SerializeToString() == original
-    assert verify.module(module) is module
-    (function,) = module.functions
-    assert function.name == model.graph.name
-    assert function.input_names == tuple(value.name for value in model.graph.input)
-    assert function.output_names == tuple(value.name for value in model.graph.output)
-    assert function.type.inputs == tuple(
-        _tensor_type(value.type) for value in model.graph.input
-    )
-    assert function.type.outputs == tuple(
-        _tensor_type(value.type) for value in model.graph.output
-    )
-    assert function.body is not None
-    (block,) = function.body.blocks
-    values = dict(zip(function.input_names, block.arguments, strict=True))
-    types = {value.name: _tensor_type(value.type) for value in model.graph.value_info}
-    initializers = {tensor.name: tensor for tensor in model.graph.initializer}
-    assert {global_.name for global_ in module.globals} == set(initializers)
-    for global_ in module.globals:
-        tensor = initializers[global_.name]
-        assert global_.type == _tensor_type(
-            onnx.helper.make_tensor_type_proto(tensor.data_type, tensor.dims)
-        )
-        assert isinstance(global_.initializer, bytes)
-        dtype = onnx.helper.tensor_dtype_to_np_dtype(tensor.data_type).newbyteorder("<")
-        np.testing.assert_array_equal(
-            np.frombuffer(global_.initializer, dtype=dtype),
-            onnx.numpy_helper.to_array(tensor).reshape(-1),
-        )
-
-    nodes = iter(model.graph.node)
-    for operation in block.operations[:-1]:
-        if isinstance(operation, ir.GetGlobal):
-            assert operation.name in initializers
-            assert operation.name not in values
-            values[operation.name] = operation.result
-            continue
-        node = next(nodes)
-        assert isinstance(operation, NATIVE_TYPES.get(node.op_type, ir.UnknownOp))
-        assert ir.get_operands(operation) == tuple(values[name] for name in node.input)
-        results = ir.get_results(operation)
-        assert tuple(result.type for result in results) == tuple(
-            types[name] for name in node.output
-        )
-        values.update(zip(node.output, results, strict=True))
-        attributes = {
-            attribute.name: onnx.helper.get_attribute_value(attribute)
-            for attribute in node.attribute
-        }
-        if isinstance(operation, ir.UnknownOp):
-            assert operation.name == f"{node.domain or 'onnx'}.{node.op_type}"
-            assert operation.attributes == attributes
-        elif isinstance(operation, ir.Transpose):
-            rank = len(types[node.output[0]].shape or ())
-            assert operation.permutation == tuple(
-                attributes.get("perm", reversed(range(rank)))
-            )
-        hypothesis.event(f"operator={node.op_type}")
-    assert next(nodes, None) is None
-    return_ = block.operations[-1]
-    assert isinstance(return_, ir.Return)
-    assert return_.operands == tuple(values[name] for name in function.output_names)
