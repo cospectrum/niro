@@ -29,6 +29,11 @@ def inline_functions(
     operation counting, using an absolute limit rather than a callee/caller ratio.
     The limit bounds each copied body, not total code growth.
 
+    For a call chain `A -> B -> C`, first inline `C` into `B` if eligible,
+    then inline the updated `B` into `A` if eligible. If expanding `C` makes
+    `B` exceed the size limit, `A` keeps its call to `B`, while `B` keeps
+    the inlined body of `C`.
+
     Args:
         module: Verified input module. Its functions and metadata are not mutated.
         max_callee_ops: Maximum number of operations in an eligible callee's body.
