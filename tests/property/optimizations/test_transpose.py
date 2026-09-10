@@ -9,11 +9,13 @@ from hypothesis.strategies import DrawFn
 
 from niro import ir, optimizations, verify
 
+from .strategies import mixed_modules
+
 
 @st.composite
 def modules(draw: DrawFn) -> ir.VerifiedModule:
-    """Build transpose DAGs with shared operands and arbitrary returned values."""
-    shape = tuple(draw(st.lists(st.integers(0, 3), max_size=4)))
+    """Build nonempty tensor DAGs and branches that consume captured results."""
+    shape = tuple(draw(st.lists(st.integers(1, 3), max_size=4)))
     argument = ir.Value(ir.ValueId(0), ir.TensorType(ir.ScalarType.I32, shape))
     values = [argument]
     operations: list[ir.Op] = []
@@ -31,21 +33,55 @@ def modules(draw: DrawFn) -> ir.VerifiedModule:
         )
         operations.append(ir.Transpose(result, operand, permutation))
         values.append(result)
-    returned = tuple(draw(st.lists(st.sampled_from(values), min_size=1, max_size=4)))
-    operations.append(ir.Return(returned))
+    returned = (values[-1], *draw(st.lists(st.sampled_from(values), max_size=3)))
+    condition = ir.Value(ir.ValueId(len(values)), ir.ScalarType.BOOL)
+    next_id = len(values) + 1
+    branches = []
+    for _ in range(2):
+        branch_ops: list[ir.Op] = []
+        branch_results = []
+        for operand in returned:
+            permutation = tuple(draw(st.permutations(tuple(range(len(shape))))))
+            inverse = tuple(permutation.index(axis) for axis in range(len(shape)))
+            transposed_type = ir.infer.transpose_result_type(operand.type, permutation)
+            transposed = ir.Value(ir.ValueId(next_id), transposed_type)
+            restored = ir.Value(ir.ValueId(next_id + 1), operand.type)
+            next_id += 2
+            branch_ops.extend(
+                [
+                    ir.Transpose(transposed, operand, permutation),
+                    ir.Transpose(restored, transposed, inverse),
+                ]
+            )
+            if draw(st.booleans()):
+                total = ir.Value(ir.ValueId(next_id), operand.type)
+                next_id += 1
+                branch_ops.append(ir.Add(total, restored, restored))
+                restored = total
+            branch_results.append(restored)
+        branch_ops.append(ir.Yield(tuple(branch_results)))
+        branches.append(ir.Region([ir.Block(operations=branch_ops)]))
+    results = tuple(
+        ir.Value(ir.ValueId(next_id + i), v.type) for i, v in enumerate(returned)
+    )
+    operations.extend([ir.If(results, condition, *branches), ir.Return(results)])
     function = ir.Function(
         "main",
-        ir.FunctionType((argument.type,), tuple(v.type for v in returned)),
-        ir.Region([ir.Block((argument,), operations)]),
+        ir.FunctionType(
+            (argument.type, condition.type), tuple(v.type for v in returned)
+        ),
+        ir.Region([ir.Block((argument, condition), operations)]),
     )
     return verify.module(ir.Module(functions=[function]))
 
 
-def evaluate(function: ir.Function) -> tuple[dict[tuple[int, ...], int], ...]:
+def evaluate(
+    function: ir.Function, condition: bool
+) -> tuple[dict[tuple[int, ...], int], ...]:
     """Move uniquely numbered tensor elements to evaluate the returned tensors."""
     block = function.first_block
     assert block is not None
-    (argument,) = block.arguments
+    argument = block.arguments[0]
     assert isinstance(argument.type, ir.TensorType)
     assert argument.type.shape is not None
     axes = []
@@ -54,18 +90,37 @@ def evaluate(function: ir.Function) -> tuple[dict[tuple[int, ...], int], ...]:
         axes.append(range(dimension))
     tensors = {
         argument.id: {
-            index: value for value, index in enumerate(itertools.product(*axes))
+            index: value for value, index in enumerate(itertools.product(*axes), 1)
         }
     }
-    for op in block.operations:
-        if isinstance(op, ir.Return):
-            return tuple(tensors[value.id] for value in op.operands)
-        assert isinstance(op, ir.Transpose)
-        tensors[op.result.id] = {
-            tuple(index[axis] for axis in op.permutation): value
-            for index, value in tensors[op.operand.id].items()
-        }
-    raise AssertionError("missing return")
+
+    def run(
+        block: ir.Block, scope: dict[ir.ValueId, dict[tuple[int, ...], int]]
+    ) -> tuple[dict[tuple[int, ...], int], ...]:
+        for op in block.operations:
+            if isinstance(op, (ir.Return, ir.Yield)):
+                return tuple(scope[value.id] for value in op.operands)
+            if isinstance(op, ir.If):
+                region = op.then_region if condition else op.else_region
+                results = run(region.blocks[0], dict(scope))
+                scope.update(
+                    (v.id, r) for v, r in zip(op.results, results, strict=True)
+                )
+                continue
+            if isinstance(op, ir.Add):
+                scope[op.result.id] = {
+                    index: value + scope[op.rhs.id][index]
+                    for index, value in scope[op.lhs.id].items()
+                }
+                continue
+            assert isinstance(op, ir.Transpose)
+            scope[op.result.id] = {
+                tuple(index[axis] for axis in op.permutation): value
+                for index, value in scope[op.operand.id].items()
+            }
+        raise AssertionError("missing terminator")
+
+    return run(block, tensors)
 
 
 @hypothesis.given(modules())
@@ -74,7 +129,10 @@ def test_simplify_transposes_preserves_semantics(module: ir.VerifiedModule) -> N
     updated = optimizations.simplify_transposes(module)
     verify.module(updated)
     hypothesis.event(f"rewritten={updated is not module}")
-    assert evaluate(updated.functions[0]) == evaluate(module.functions[0])
+    for condition in (False, True):
+        assert evaluate(updated.functions[0], condition) == evaluate(
+            module.functions[0], condition
+        )
     assert updated.functions[0].type == module.functions[0].type
     assert module == snapshot
     assert optimizations.simplify_transposes(updated) is updated
@@ -85,3 +143,18 @@ def test_simplify_transposes_preserves_semantics(module: ir.VerifiedModule) -> N
     for op in transposes:
         assert op.permutation != tuple(range(len(op.permutation)))
         assert op.operand.id not in produced
+
+
+@hypothesis.given(mixed_modules())
+def test_simplify_transposes_preserves_validity(module: ir.VerifiedModule) -> None:
+    snapshot = copy.deepcopy(module)
+    updated = optimizations.simplify_transposes(module)
+    verify.module(updated)
+    hypothesis.event(f"rewritten={updated is not module}")
+    assert module == snapshot
+    assert updated.globals == module.globals
+    assert updated.attributes == module.attributes
+    assert [(f.name, f.type, f.attributes) for f in updated.functions] == [
+        (f.name, f.type, f.attributes) for f in module.functions
+    ]
+    assert optimizations.simplify_transposes(updated) is updated

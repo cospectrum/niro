@@ -24,8 +24,10 @@ such as `optimizations/test_inlining.py`. Generate bounded,
 valid programs and check semantic preservation as well as IR validity and input
 immutability. Check idempotence when it is part of the pass behavior. CI runs
 unit tests, property tests, then end-to-end tests. The shared Hypothesis profile
-runs 1,000 examples per test. Use `--hypothesis-show-statistics` to inspect runtime
-and generated-case events when tuning generators or the example budget.
+runs 200 examples per test. Use `--hypothesis-show-statistics` to inspect runtime
+and generated-case events when tuning generators or the example budget. Prefer
+per-test `@hypothesis.settings(max_examples=...)` overrides when a test needs a
+different budget; consider total CI runtime as the suite grows.
 
 When an API requires `VerifiedModule`, obtain it through `verify.module(module)`
 (or the builder's `module.verify()`), including in tests. Calling

@@ -9,12 +9,14 @@ from hypothesis.strategies import DrawFn
 
 from niro import ir, optimizations, verify
 
+from .strategies import mixed_modules
+
 
 @st.composite
 def modules(draw: DrawFn) -> ir.VerifiedModule:
     """Build small call DAGs, including nested calls, captures and ordered effects."""
     functions: list[ir.Function] = []
-    for index in range(draw(st.integers(1, 4))):
+    for index in range(draw(st.integers(2, 4))):
         functions.append(make_function(draw, f"f{index}", functions))
     return verify.module(ir.Module(functions=list(draw(st.permutations(functions)))))
 
@@ -69,6 +71,13 @@ def make_function(
 
     values = [x, y]
     operations = body(values)
+    if callees:
+        callee = draw(st.sampled_from(callees))
+        results = tuple(fresh(type_) for type_ in callee.type.outputs)
+        operations.append(ir.Call(callee.name, (values[-1], x, condition), results))
+        values.extend(results)
+    # Make computed values observable even in functions with no return values.
+    operations.append(ir.UnknownOp(f"observe_{name}", tuple(values), ()))
     returned = tuple(draw(st.lists(st.sampled_from(values), max_size=2)))
     operations.append(ir.Return(returned))
     return ir.Function(
@@ -169,3 +178,20 @@ def test_inline_functions_preserves_semantics(
             if function.body is not None
             for op in ir.iter_ops(function.body)
         )
+
+
+@hypothesis.given(mixed_modules(), st.one_of(st.none(), st.integers(0, 20)))
+def test_inline_functions_preserves_validity(
+    module: ir.VerifiedModule, limit: int | None
+) -> None:
+    snapshot = copy.deepcopy(module)
+    updated = optimizations.inline_functions(module, max_callee_ops=limit)
+    verify.module(updated)
+    hypothesis.event(f"rewritten={updated is not module}")
+    assert module == snapshot
+    assert updated.globals == module.globals
+    assert updated.attributes == module.attributes
+    assert [(f.name, f.type, f.attributes) for f in updated.functions] == [
+        (f.name, f.type, f.attributes) for f in module.functions
+    ]
+    assert optimizations.inline_functions(updated, max_callee_ops=limit) is updated
