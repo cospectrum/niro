@@ -12,6 +12,16 @@ def test_exports_rewrite() -> None:
     assert niro.rewrite is rewrite
 
 
+def test_index_has_a_separate_namespace() -> None:
+    import niro
+    from niro import index, ir
+
+    assert niro.index is index
+    for name in index.__all__:
+        assert hasattr(index, name)
+        assert not hasattr(ir, name)
+
+
 def test_ir_exports_operations() -> None:
     from niro import ir
 
@@ -81,13 +91,14 @@ def test_exports_mlir_output() -> None:
     assert niro.write_mlir is mlir.write_mlir
 
 
-def test_optimization_interface_accepts_a_verified_module_pass() -> None:
-    from niro import ir, optimizations, verify
+def test_pass_interface_accepts_an_indexed_verified_module_pass() -> None:
+    import niro
+    from niro import index, ir, passes, verify
 
-    def identity(module: ir.VerifiedModule) -> ir.VerifiedModule:
-        return module
-
-    pass_: optimizations.ModulePass = identity
+    pass_: passes.Pass = passes.noop
     module = verify.module(ir.Module())
-    assert pass_(module) is module
-    assert optimizations.__all__ == ["ModulePass"]
+    indexed = index.index_module(module)
+    assert pass_(indexed) is indexed
+    assert indexed.module is module
+    assert niro.passes is passes
+    assert passes.__all__ == ["Pass", "noop"]

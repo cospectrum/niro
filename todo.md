@@ -1,20 +1,20 @@
 # TODO
 
-## Niro IR optimizations
+## Niro IR pass candidates
 
-Candidates without identified stock MLIR/xDSL passes covering all frontends;
-related implementations exist. Recheck upstream support before implementing.
+Scope: [xDSL] and stock [mlir-opt]; no equivalent passes identified yet.
 
-- [ ] Specialize branches and shapes using guaranteed input contracts.
-- [ ] Precompute frozen weight transforms and constant preprocessing.
-- [ ] Recover LayerNorm and attention ops from equivalent decompositions.
-- [ ] Remove redundant layout conversions and packing across frontend boundaries.
-- [ ] Prune unrequested model outputs and their exclusive computations/parameters.
-- [ ] Share immutable parameters and pure computations across composed models.
+- [ ] Recover decomposed attention after adding native attention semantics and lowering.
+- [ ] Recover decomposed LayerNorm/RMSNorm after defining exact numerical semantics and lowering.
+- [ ] Deduplicate private immutable parameter globals by type and exact contents across composed models.
 
-Related: [StableHLO](https://openxla.org/stablehlo/dynamism),
-[torch-mlir](https://github.com/llvm/torch-mlir/blob/main/python/torch_mlir/extras/fx_importer.py),
-[IREE](https://iree.dev/reference/mlir-passes/Preprocessing/).
+## Niro interface tasks
+
+- [ ] Select requested outputs, update signatures/names, and run effect-aware cleanup.
+- [ ] Validate input contracts and pass guaranteed shapes/values to specialization.
+
+[xDSL]: https://github.com/xdslproject/xdsl/blob/main/xdsl/transforms/__init__.py
+[mlir-opt]: https://mlir.llvm.org/docs/Passes/
 
 ## ONNX operations
 

@@ -19,10 +19,9 @@ Test meaningful behavior and invariants. Unit tests mirror `src/` under
 `tests/unit/`; group end-to-end tests under `tests/e2e/` by interface or workflow.
 
 Property tests use Hypothesis under `tests/property/`, mirroring the source
-modules where useful. Like unit tests, name files after the source module,
-such as `optimizations/test_inlining.py`. Generate bounded,
-valid programs and check semantic preservation as well as IR validity and input
-immutability. Check idempotence when it is part of the pass behavior. CI runs
+modules where useful. Like unit tests, name files after the source module.
+Generate bounded, valid programs and check semantic preservation as well as IR
+validity and input immutability. Check idempotence when it is part of the pass behavior. CI runs
 unit tests, property tests, then end-to-end tests. The shared Hypothesis profile
 runs 200 examples per test. Use `--hypothesis-show-statistics` to inspect runtime
 and generated-case events when tuning generators or the example budget. Prefer
@@ -47,9 +46,7 @@ does so before returning.
   Use behavior-owning classes only for shared mutable state (builders, value
   allocators) or resource lifecycles; avoid inheritance and classes that merely
   group functions.
-- Name optimization modules by subject or transformation (`inlining.py`,
-  `transpose.py`) and pass functions by action (`inline_functions`,
-  `simplify_transposes`).
+- Name pass modules by subject or transformation and pass functions by action.
 - Prefer guard clauses and early returns over nesting.
 - Every function and type defined under `src/` must have a docstring, including
   private helpers, methods, classes, and type aliases. For functions, explain
