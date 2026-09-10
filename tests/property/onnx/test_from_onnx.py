@@ -12,7 +12,7 @@ from hypothesis.strategies import DrawFn, SearchStrategy
 import niro
 from niro import ir, verify
 
-from ..strategies import onnx as graphs
+from ..strategies import onnx as onnx_st
 
 # ONNX op name -> Niro op type, used only for comparison in tests.
 _SUPPORTED_OP_TYPES: dict[str, type[ir.Op]] = {
@@ -29,7 +29,7 @@ def test_import_preserves_graph(unknown_only: bool, data: st.DataObject) -> None
     operators = _unknown_operators()
     if not unknown_only:
         operators = _native_operators() + operators
-    model = data.draw(graphs.models(operators=operators, min_nodes=1))
+    model = data.draw(onnx_st.models(operators=operators, min_nodes=1))
     onnx.checker.check_model(model, full_check=True)
     original = model.SerializeToString()
 
@@ -111,31 +111,31 @@ def _assert_import_matches_graph(module: ir.Module, graph: onnx.GraphProto) -> N
     assert return_.operands == tuple(values[name] for name in function.output_names)
 
 
-def _unknown_operators() -> tuple[graphs.Operator, ...]:
+def _unknown_operators() -> tuple[onnx_st.Operator, ...]:
     """Return generation rules for operators imported as UnknownOp."""
     return (
-        graphs.OPERATORS.identity,
-        graphs.OPERATORS.relu,
-        graphs.unary("Neg"),
-        graphs.broadcast_binary("Sub"),
-        graphs.broadcast_binary("Less", output_element_type=onnx.TensorProto.BOOL),
-        graphs.Operator("TopK", _top_k),
+        onnx_st.OPERATORS.identity,
+        onnx_st.OPERATORS.relu,
+        onnx_st.unary("Neg"),
+        onnx_st.broadcast_binary("Sub"),
+        onnx_st.broadcast_binary("Less", output_element_type=onnx.TensorProto.BOOL),
+        onnx_st.Operator("TopK", _top_k),
     )
 
 
-def _native_operators() -> tuple[graphs.Operator, ...]:
+def _native_operators() -> tuple[onnx_st.Operator, ...]:
     """Return generation rules within Niro's supported native operator subset."""
     return (
-        graphs.Operator("Add", _same_type_binary),
-        graphs.Operator("Mul", _same_type_binary),
-        graphs.Operator("MatMul", _matrix_multiply),
-        graphs.OPERATORS.transpose,
+        onnx_st.Operator("Add", _same_type_binary),
+        onnx_st.Operator("Mul", _same_type_binary),
+        onnx_st.Operator("MatMul", _matrix_multiply),
+        onnx_st.OPERATORS.transpose,
     )
 
 
 def _same_type_binary(
-    context: graphs.Context,
-) -> SearchStrategy[graphs.NodeSpec] | None:
+    context: onnx_st.Context,
+) -> SearchStrategy[onnx_st.NodeSpec] | None:
     """Niro's native Add and Mul require identical numeric tensor types."""
     pairs = [
         (lhs, rhs)
@@ -147,27 +147,29 @@ def _same_type_binary(
     if not pairs:
         return None
     return st.sampled_from(pairs).map(
-        lambda pair: graphs.NodeSpec((pair[0].name, pair[1].name), (pair[0].type,))
+        lambda pair: onnx_st.NodeSpec((pair[0].name, pair[1].name), (pair[0].type,))
     )
 
 
-def _matrix_multiply(context: graphs.Context) -> SearchStrategy[graphs.NodeSpec] | None:
+def _matrix_multiply(
+    context: onnx_st.Context,
+) -> SearchStrategy[onnx_st.NodeSpec] | None:
     """Niro's native MatMul currently accepts rank-two tensors only."""
     matrices = tuple(
-        value for value in context.values if len(graphs.tensor_shape(value)) == 2
+        value for value in context.values if len(onnx_st.tensor_shape(value)) == 2
     )
-    return graphs.OPERATORS.matmul.strategy(
+    return onnx_st.OPERATORS.matmul.strategy(
         dataclasses.replace(context, values=matrices)
     )
 
 
 @st.composite
-def _top_k_nodes(draw: DrawFn, values: tuple[graphs.Value, ...]) -> graphs.NodeSpec:
+def _top_k_nodes(draw: DrawFn, values: tuple[onnx_st.Value, ...]) -> onnx_st.NodeSpec:
     value = draw(st.sampled_from(values))
-    shape = graphs.tensor_shape(value)
+    shape = onnx_st.tensor_shape(value)
     k = draw(st.integers(1, shape[-1]))
     output_shape = (*shape[:-1], k)
-    return graphs.NodeSpec(
+    return onnx_st.NodeSpec(
         inputs=(
             value.name,
             onnx.helper.make_tensor("", onnx.TensorProto.INT64, (1,), (k,)),
@@ -186,7 +188,7 @@ def _top_k_nodes(draw: DrawFn, values: tuple[graphs.Value, ...]) -> graphs.NodeS
     )
 
 
-def _top_k(context: graphs.Context) -> SearchStrategy[graphs.NodeSpec] | None:
+def _top_k(context: onnx_st.Context) -> SearchStrategy[onnx_st.NodeSpec] | None:
     if (
         not context.initializer_slots
         or context.limits.max_rank < 1
@@ -197,8 +199,8 @@ def _top_k(context: graphs.Context) -> SearchStrategy[graphs.NodeSpec] | None:
         value
         for value in context.values
         if value.type.tensor_type.elem_type != onnx.TensorProto.BOOL
-        and graphs.tensor_shape(value)
-        and graphs.tensor_shape(value)[-1] > 0
+        and onnx_st.tensor_shape(value)
+        and onnx_st.tensor_shape(value)[-1] > 0
     )
     return _top_k_nodes(values) if values else None
 

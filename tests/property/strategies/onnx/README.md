@@ -11,14 +11,14 @@ field declaration. String selection in `models()` remains supported. Pass an
 import onnx
 from hypothesis import given
 
-from tests.property.strategies import onnx as strategies
+from tests.property.strategies import onnx as onnx_st
 
 
 @given(
-    strategies.models(
+    onnx_st.models(
         operators=(
             "Identity",
-            strategies.unary("Neg", element_types=(onnx.TensorProto.FLOAT,)),
+            onnx_st.unary("Neg", element_types=(onnx.TensorProto.FLOAT,)),
         )
     )
 )
@@ -38,7 +38,7 @@ which the construction rule is valid in the active opset.
 An `Operator(op_type, strategy, domain="")` associates an ONNX name with a
 function that accepts a `Context` and returns a Hypothesis `SearchStrategy` of
 `NodeSpec`, or `None` when no valid case is available. Inspect compatibility
-before returning the strategy; make random choices inside Hypothesis strategies.
+before returning the strategy; make random choices inside Hypothesis onnx_st.
 
 For example, this rule casts concrete INT32 tensors to INT64 at opset 14:
 
@@ -47,12 +47,12 @@ import onnx
 from hypothesis import strategies as st
 from hypothesis.strategies import DrawFn, SearchStrategy
 
-from tests.property.strategies import onnx as strategies
+from tests.property.strategies import onnx as onnx_st
 
 
 def cast_to_int64(
-    context: strategies.Context,
-) -> SearchStrategy[strategies.NodeSpec] | None:
+    context: onnx_st.Context,
+) -> SearchStrategy[onnx_st.NodeSpec] | None:
     if context.opsets.get("") != 14:
         return None
     candidates = tuple(
@@ -70,10 +70,10 @@ def cast_to_int64(
         return None
 
     @st.composite
-    def cases(draw: DrawFn) -> strategies.NodeSpec:
+    def cases(draw: DrawFn) -> onnx_st.NodeSpec:
         value = draw(st.sampled_from(candidates))
         shape = [dim.dim_value for dim in value.type.tensor_type.shape.dim]
-        return strategies.NodeSpec(
+        return onnx_st.NodeSpec(
             inputs=(value.name,),
             outputs=(
                 onnx.helper.make_tensor_type_proto(onnx.TensorProto.INT64, shape),
@@ -84,8 +84,8 @@ def cast_to_int64(
     return cases()
 
 
-cast = strategies.Operator("Cast", cast_to_int64)
-models = strategies.models(
+cast = onnx_st.Operator("Cast", cast_to_int64)
+models = onnx_st.models(
     operators=("Identity", cast),
     element_types=(onnx.TensorProto.INT32,),
     opsets={"": 14},

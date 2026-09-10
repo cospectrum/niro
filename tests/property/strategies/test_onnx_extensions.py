@@ -7,20 +7,20 @@ import pytest
 from hypothesis import strategies as st
 from hypothesis.strategies import SearchStrategy
 
-from . import onnx as onnx_strategies
+from . import onnx as onnx_st
 from .test_onnx import assert_valid_and_executable
 
 
 def _source(
-    context: onnx_strategies.Context,
-) -> SearchStrategy[onnx_strategies.NodeSpec] | None:
+    context: onnx_st.Context,
+) -> SearchStrategy[onnx_st.NodeSpec] | None:
     if context.values or context.limits.max_rank < 2 or context.limits.max_dim < 3:
         return None
     value = onnx.helper.make_tensor(
         "", onnx.TensorProto.FLOAT, (2, 3), (0, 1, 2, 3, 4, 5)
     )
     return st.just(
-        onnx_strategies.NodeSpec(
+        onnx_st.NodeSpec(
             inputs=(),
             outputs=(onnx.helper.make_tensor_type_proto(value.data_type, value.dims),),
             attributes=(onnx.helper.make_attribute("value", value),),
@@ -29,12 +29,12 @@ def _source(
 
 
 def _top_k(
-    context: onnx_strategies.Context,
-) -> SearchStrategy[onnx_strategies.NodeSpec] | None:
+    context: onnx_st.Context,
+) -> SearchStrategy[onnx_st.NodeSpec] | None:
     if len(context.values) != 1 or context.initializer_slots < 1:
         return None
     return st.just(
-        onnx_strategies.NodeSpec(
+        onnx_st.NodeSpec(
             inputs=(
                 context.values[0].name,
                 onnx.helper.make_tensor("", onnx.TensorProto.INT64, (1,), (2,)),
@@ -49,13 +49,13 @@ def _top_k(
 
 
 def _clip(
-    context: onnx_strategies.Context,
-) -> SearchStrategy[onnx_strategies.NodeSpec] | None:
+    context: onnx_st.Context,
+) -> SearchStrategy[onnx_st.NodeSpec] | None:
     if len(context.values) != 1 or context.initializer_slots < 1:
         return None
     value = context.values[0]
     return st.just(
-        onnx_strategies.NodeSpec(
+        onnx_st.NodeSpec(
             inputs=(
                 value.name,
                 None,
@@ -67,19 +67,17 @@ def _clip(
 
 
 def _dropout(
-    context: onnx_strategies.Context,
-) -> SearchStrategy[onnx_strategies.NodeSpec] | None:
+    context: onnx_st.Context,
+) -> SearchStrategy[onnx_st.NodeSpec] | None:
     if len(context.values) != 1:
         return None
     value = context.values[0]
-    return st.just(
-        onnx_strategies.NodeSpec(inputs=(value.name,), outputs=(value.type, None))
-    )
+    return st.just(onnx_st.NodeSpec(inputs=(value.name,), outputs=(value.type, None)))
 
 
 def _if(
-    context: onnx_strategies.Context,
-) -> SearchStrategy[onnx_strategies.NodeSpec] | None:
+    context: onnx_st.Context,
+) -> SearchStrategy[onnx_st.NodeSpec] | None:
     if len(context.values) != 1 or context.initializer_slots < 1:
         return None
     value = context.values[0]
@@ -94,7 +92,7 @@ def _if(
         )
         attributes.append(onnx.helper.make_attribute(branch, graph))
     return st.just(
-        onnx_strategies.NodeSpec(
+        onnx_st.NodeSpec(
             inputs=(onnx.helper.make_tensor("", onnx.TensorProto.BOOL, (), (True,)),),
             outputs=(value.type,),
             attributes=tuple(attributes),
@@ -103,13 +101,13 @@ def _if(
 
 
 def _normalizer(
-    context: onnx_strategies.Context,
-) -> SearchStrategy[onnx_strategies.NodeSpec] | None:
+    context: onnx_st.Context,
+) -> SearchStrategy[onnx_st.NodeSpec] | None:
     if len(context.values) != 1:
         return None
     value = context.values[0]
     return st.just(
-        onnx_strategies.NodeSpec(
+        onnx_st.NodeSpec(
             inputs=(value.name,),
             outputs=(value.type,),
             attributes=(onnx.helper.make_attribute("norm", "MAX"),),
@@ -121,14 +119,14 @@ def _normalizer(
     ("operator", "expected"),
     [
         (
-            onnx_strategies.Operator("TopK", _top_k),
+            onnx_st.Operator("TopK", _top_k),
             [[2, 1, 5, 4], [2, 1, 2, 1]],
         ),
-        (onnx_strategies.Operator("Clip", _clip), [[0, 1, 2, 2, 2, 2]]),
-        (onnx_strategies.Operator("Dropout", _dropout), [[0, 1, 2, 3, 4, 5]]),
-        (onnx_strategies.Operator("If", _if), [[0, 1, 2, 3, 4, 5]]),
+        (onnx_st.Operator("Clip", _clip), [[0, 1, 2, 2, 2, 2]]),
+        (onnx_st.Operator("Dropout", _dropout), [[0, 1, 2, 3, 4, 5]]),
+        (onnx_st.Operator("If", _if), [[0, 1, 2, 3, 4, 5]]),
         (
-            onnx_strategies.Operator("Normalizer", _normalizer, domain="ai.onnx.ml"),
+            onnx_st.Operator("Normalizer", _normalizer, domain="ai.onnx.ml"),
             [[0, 0.5, 1, 0.6, 0.8, 1]],
         ),
     ],
@@ -143,14 +141,14 @@ def _normalizer(
 @hypothesis.settings(max_examples=10)
 @hypothesis.given(data=st.data())
 def test_tensor_operator_extensions(
-    operator: onnx_strategies.Operator,
+    operator: onnx_st.Operator,
     expected: list[list[float]],
     data: st.DataObject,
 ) -> None:
     opsets = {"": 14, **({operator.domain: 3} if operator.domain else {})}
     model = data.draw(
-        onnx_strategies.models(
-            operators=(onnx_strategies.Operator("Constant", _source), operator),
+        onnx_st.models(
+            operators=(onnx_st.Operator("Constant", _source), operator),
             min_nodes=2,
             max_nodes=2,
             max_inputs=0,
@@ -180,8 +178,8 @@ def test_tensor_operator_extensions(
 
 @hypothesis.settings(max_examples=10)
 @hypothesis.given(
-    onnx_strategies.models(
-        operators=(onnx_strategies.Operator("Constant", _source),),
+    onnx_st.models(
+        operators=(onnx_st.Operator("Constant", _source),),
         min_nodes=1,
         max_nodes=1,
         max_inputs=0,
@@ -198,13 +196,13 @@ def test_constant_can_seed_graph_without_inputs(model: onnx.ModelProto) -> None:
 
 
 def _sequence_construct(
-    context: onnx_strategies.Context,
-) -> SearchStrategy[onnx_strategies.NodeSpec] | None:
+    context: onnx_st.Context,
+) -> SearchStrategy[onnx_st.NodeSpec] | None:
     if len(context.values) != 1:
         return None
     value = context.values[0]
     return st.just(
-        onnx_strategies.NodeSpec(
+        onnx_st.NodeSpec(
             inputs=(value.name, value.name),
             outputs=(onnx.helper.make_sequence_type_proto(value.type),),
         )
@@ -212,14 +210,14 @@ def _sequence_construct(
 
 
 def _sequence_length(
-    context: onnx_strategies.Context,
-) -> SearchStrategy[onnx_strategies.NodeSpec] | None:
+    context: onnx_st.Context,
+) -> SearchStrategy[onnx_st.NodeSpec] | None:
     if len(context.values) != 2:
         return None
     value = context.values[-1]
     assert value.type.HasField("sequence_type")
     return st.just(
-        onnx_strategies.NodeSpec(
+        onnx_st.NodeSpec(
             inputs=(value.name,),
             outputs=(onnx.helper.make_tensor_type_proto(onnx.TensorProto.INT64, ()),),
         )
@@ -228,11 +226,11 @@ def _sequence_length(
 
 @hypothesis.settings(max_examples=10)
 @hypothesis.given(
-    onnx_strategies.models(
+    onnx_st.models(
         operators=(
-            onnx_strategies.Operator("Constant", _source),
-            onnx_strategies.Operator("SequenceConstruct", _sequence_construct),
-            onnx_strategies.Operator("SequenceLength", _sequence_length),
+            onnx_st.Operator("Constant", _source),
+            onnx_st.Operator("SequenceConstruct", _sequence_construct),
+            onnx_st.Operator("SequenceLength", _sequence_length),
         ),
         min_nodes=3,
         max_nodes=3,
@@ -271,7 +269,7 @@ def test_reused_rule_protobufs_and_models_are_independent(data: st.DataObject) -
         "value",
         onnx.helper.make_tensor("source", onnx.TensorProto.FLOAT, (2, 3), range(6)),
     )
-    source_spec = onnx_strategies.NodeSpec(
+    source_spec = onnx_st.NodeSpec(
         inputs=(), outputs=(source_type,), attributes=(source_attribute,)
     )
     k = onnx.helper.make_tensor("reusable_k", onnx.TensorProto.INT64, (1,), (2,))
@@ -284,27 +282,27 @@ def test_reused_rule_protobufs_and_models_are_independent(data: st.DataObject) -
     originals = tuple(value.SerializeToString() for value in protobufs)
 
     def source(
-        context: onnx_strategies.Context,
-    ) -> SearchStrategy[onnx_strategies.NodeSpec] | None:
+        context: onnx_st.Context,
+    ) -> SearchStrategy[onnx_st.NodeSpec] | None:
         return None if context.values else st.just(source_spec)
 
     def top_k(
-        context: onnx_strategies.Context,
-    ) -> SearchStrategy[onnx_strategies.NodeSpec] | None:
+        context: onnx_st.Context,
+    ) -> SearchStrategy[onnx_st.NodeSpec] | None:
         if len(context.values) != 1 or context.initializer_slots < 1:
             return None
         return st.just(
-            onnx_strategies.NodeSpec(
+            onnx_st.NodeSpec(
                 inputs=(context.values[0].name, k),
                 outputs=result_types,
                 attributes=(axis,),
             )
         )
 
-    strategy = onnx_strategies.models(
+    strategy = onnx_st.models(
         operators=(
-            onnx_strategies.Operator("Constant", source),
-            onnx_strategies.Operator("TopK", top_k),
+            onnx_st.Operator("Constant", source),
+            onnx_st.Operator("TopK", top_k),
         ),
         min_nodes=2,
         max_nodes=2,
