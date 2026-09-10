@@ -17,6 +17,7 @@ from niro import ir
 from niro.ir import VerifiedModule
 
 ValueTable = dict[ir.ValueId, SSAValue]
+"""Mutable mapping from function-local Niro value IDs to lowered MLIR SSA values."""
 
 
 def to_mlir(niro_module: VerifiedModule) -> builtin.ModuleOp:
@@ -42,6 +43,11 @@ def to_mlir(niro_module: VerifiedModule) -> builtin.ModuleOp:
 def _lower_function(
     function: ir.Function,
 ) -> tuple[tuple[Operation, ...], func.FuncOp]:
+    """Return generated constant globals and the lowered function.
+
+    A definition must have exactly one body block. External declarations have
+    no generated globals.
+    """
     inputs = [_lower_type(value_type) for value_type in function.type.inputs]
     outputs = [_lower_type(value_type) for value_type in function.type.outputs]
     if function.body is None:
@@ -80,6 +86,7 @@ def _emit_operations(
     function_name: str,
     operations: list[ir.Op],
 ) -> None:
+    """Append lowered operations in order, updating values and generated globals."""
     for operation in operations:
         _emit_operation(
             block,
@@ -97,6 +104,10 @@ def _emit_operation(
     function_name: str,
     operation: ir.Op,
 ) -> None:
+    """Append an operation's lowering and record its results and any globals.
+
+    Operands must already be bound; opaque operations cannot be lowered.
+    """
     match operation:
         case ir.Const():
             _emit_const(
@@ -172,6 +183,11 @@ def _emit_region(
     generated_globals: list[Operation],
     function_name: str,
 ) -> Region:
+    """Return a lowered single-block, argument-free nested region.
+
+    Copy visible bindings so local results do not escape; append any generated
+    constant globals to the shared list.
+    """
     (niro_block,) = region.blocks
     block = Block()
     values = dict(visible_values)
@@ -192,6 +208,11 @@ def _emit_const(
     function_name: str,
     operation: ir.Const,
 ) -> None:
+    """Append a constant load and bind its result.
+
+    Tensor literals add a private resource-backed global; scalars use an
+    arithmetic constant. Literal types must already have been verified.
+    """
     if isinstance(operation.result.type, ir.TensorType):
         data = cast(bytes, operation.literal)
         tensor_type = cast(
@@ -222,6 +243,7 @@ def _emit_const(
 
 
 def _lower_global(global_: ir.Global) -> ml_program.GlobalOp:
+    """Return a private tensor global, registering its initializer resource."""
     if not isinstance(global_.type, ir.TensorType):
         raise TypeError("MLIR globals currently require tensor types")
     data = cast(bytes, global_.initializer)
@@ -245,6 +267,7 @@ def _dense_resource(
     tensor_type: builtin.TensorType[builtin.AnyDenseElement],
     data: bytes,
 ) -> builtin.DenseResourceAttr:
+    """Register packed tensor bytes with the builtin dialect and return an attribute."""
     resources = builtin.Builtin.get_interface(OpAsmDialectInterface)
     assert resources is not None
     handle = resources.declare_resource(name)
@@ -259,6 +282,7 @@ def _emit_arithmetic(
     integer_op: type[arith.AddiOp | arith.MuliOp],
     float_op: type[arith.AddfOp | arith.MulfOp],
 ) -> None:
+    """Append integer or float arithmetic by element type and bind the result."""
     scalar_type = _element_type(operation.result.type)
     op_type = (
         float_op
@@ -279,6 +303,7 @@ def _emit_transpose(
     values: ValueTable,
     operation: ir.Transpose,
 ) -> None:
+    """Append an empty tensor and transpose, binding a statically shaped result."""
     result_type = cast(ir.TensorType, operation.result.type)
     _require_static_shape(result_type, "transpose")
     lowered_type = _lower_type(result_type)
@@ -299,6 +324,10 @@ def _emit_matmul(
     values: ValueTable,
     operation: ir.MatMul,
 ) -> None:
+    """Append a zero-filled output tensor and matrix product, then bind the result.
+
+    Operand and result shapes must be static and ranked.
+    """
     lhs_type = cast(ir.TensorType, operation.lhs.type)
     rhs_type = cast(ir.TensorType, operation.rhs.type)
     result_type = cast(ir.TensorType, operation.result.type)
@@ -329,7 +358,8 @@ def _emit_matmul(
 @overload
 def _lower_type(
     value_type: ir.ScalarType,
-) -> builtin.AnyDenseElement: ...
+) -> builtin.AnyDenseElement:
+    """Return the builtin MLIR type for a scalar."""
 
 
 @overload
@@ -338,10 +368,12 @@ def _lower_type(
 ) -> (
     builtin.TensorType[builtin.AnyDenseElement]
     | builtin.UnrankedTensorType[builtin.AnyDenseElement]
-): ...
+):
+    """Return an MLIR type, preserving unranked tensors and dynamic dimensions."""
 
 
 def _lower_type(value_type: ir.Type) -> Attribute:
+    """Return an MLIR type, preserving unranked tensors and dynamic dimensions."""
     if isinstance(value_type, ir.TensorType):
         element_type = _lower_scalar_type(value_type.element_type)
         if value_type.shape is None:
@@ -355,6 +387,7 @@ def _lower_type(value_type: ir.Type) -> Attribute:
 
 
 def _lower_scalar_type(value_type: ir.ScalarType) -> builtin.AnyDenseElement:
+    """Return the builtin MLIR type corresponding to a Niro scalar type."""
     match value_type:
         case ir.ScalarType.BOOL:
             return builtin.i1
@@ -372,6 +405,7 @@ def _lower_scalar_literal(
     value: ir.Literal,
     value_type: ir.ScalarType,
 ) -> builtin.IntegerAttr | builtin.FloatAttr:
+    """Return an MLIR scalar attribute for a literal verified against its type."""
     match value_type:
         case ir.ScalarType.BOOL:
             return builtin.BoolAttr.from_bool(cast(bool, value))
@@ -388,6 +422,7 @@ def _lower_scalar_literal(
 def _lower_attributes(
     attributes: ir.Attributes,
 ) -> dict[str, Attribute]:
+    """Return lowered attributes, prefixing unqualified names with `niro.`."""
     return {
         name if "." in name else f"niro.{name}": _lower_attribute(value)
         for name, value in attributes.items()
@@ -395,6 +430,7 @@ def _lower_attributes(
 
 
 def _lower_attribute(value: ir.AttributeValue) -> Attribute:
+    """Return an MLIR attribute, recursively lowering sequences to arrays."""
     if value is None:
         return builtin.UnitAttr()
     if isinstance(value, bool):
@@ -411,6 +447,7 @@ def _lower_attribute(value: ir.AttributeValue) -> Attribute:
 
 
 def _lookup_value(values: ValueTable, value: ir.Value) -> SSAValue:
+    """Return the previously bound MLIR SSA value for a Niro value ID."""
     return values[value.id]
 
 
@@ -419,6 +456,7 @@ def _bind_results(
     niro_values: tuple[ir.Value, ...],
     mlir_values: tuple[SSAValue, ...],
 ) -> None:
+    """Add corresponding result bindings; both result tuples must have equal length."""
     values.update(
         (niro_value.id, mlir_value)
         for niro_value, mlir_value in zip(niro_values, mlir_values, strict=True)
@@ -426,11 +464,13 @@ def _bind_results(
 
 
 def _element_type(value_type: ir.Type) -> ir.ScalarType:
+    """Return a tensor element type or the scalar type itself."""
     if isinstance(value_type, ir.TensorType):
         return value_type.element_type
     return value_type
 
 
 def _require_static_shape(value_type: ir.TensorType, operation: str) -> None:
+    """Raise `NotImplementedError` unless every tensor dimension is known."""
     if value_type.shape is None or any(dim is None for dim in value_type.shape):
         raise NotImplementedError(f"{operation} requires a static ranked tensor")

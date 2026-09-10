@@ -20,6 +20,8 @@ _ONNX_DOMAINS = (
 
 @dataclass(frozen=True)
 class Ctx:
+    """Import context holding a graph and its initializer and value-type mappings."""
+
     graph: onnx.GraphProto
     weights: Mapping[OnnxValueName, ir.Global]
     types: Mapping[OnnxValueName, ir.Type]
@@ -46,6 +48,11 @@ def node_name(node: onnx.NodeProto) -> str:
 
 
 def _import_forward(ctx: Ctx, module: builder.ModuleBuilder) -> ir.Function:
+    """Build and return the graph entry point, adding it to the module.
+
+    Resolve operands in graph order and load initializers on first use. Inputs
+    must be named and declared graph outputs must match the resulting types.
+    """
     fn = _declare_entry_point(ctx.graph, module)
     input_names = fn.raw.input_names
     output_names = fn.raw.output_names
@@ -92,6 +99,7 @@ def _declare_entry_point(
     graph: onnx.GraphProto,
     module: builder.ModuleBuilder,
 ) -> builder.FunctionBuilder:
+    """Add and return a function declaration, excluding initializers from inputs."""
     initializer_names = {t.name for t in graph.initializer}
     pb_inputs = [val for val in graph.input if val.name not in initializer_names]
     pb_outputs = [val for val in graph.output]
@@ -114,6 +122,7 @@ def _import_node(
     node: onnx.NodeProto,
     operands: Sequence[ir.Value],
 ) -> ir.Value | Sequence[ir.Value]:
+    """Append a supported or opaque ONNX operation and return its SSA results."""
     if node.domain not in _ONNX_DOMAINS:
         return _import_unknown_node(ctx, block, node, operands)
 
@@ -138,6 +147,10 @@ def _import_transpose(
     node: onnx.NodeProto,
     operands: Sequence[ir.Value],
 ) -> ir.Value:
+    """Append a transpose and return its result.
+
+    An omitted permutation reverses all axes and requires a known operand rank.
+    """
     (operand,) = operands
     attributes = {attribute.name: attribute for attribute in node.attribute}
     if "perm" in attributes:
@@ -158,6 +171,11 @@ def _import_unknown_node(
     node: onnx.NodeProto,
     operands: Sequence[ir.Value],
 ) -> Sequence[ir.Value]:
+    """Append an opaque operation and return results with declared ONNX types.
+
+    Every output must have a type in the context; attributes must be supported
+    scalar values or flat sequences of those values.
+    """
     return block.unknown_op(
         name=node_name(node),
         operands=operands,
@@ -170,6 +188,7 @@ def _import_initializers(
     graph: onnx.GraphProto,
     module: builder.ModuleBuilder,
 ) -> dict[OnnxValueName, ir.Global]:
+    """Add globals for graph initializers and return their ONNX-name mapping."""
     sym_table: dict[OnnxValueName, ir.Global] = {}
     for t in graph.initializer:
         ty = _tensor_type(t)
@@ -179,6 +198,7 @@ def _import_initializers(
 
 
 def _attribute_value(attr: onnx.AttributeProto) -> ir.AttributeValue:
+    """Return a scalar or flat tuple attribute, rejecting unsupported ONNX values."""
     value = onnx.helper.get_attribute_value(attr)
     if isinstance(value, (bool, int, float, str, bytes)) or value is None:
         return value
@@ -194,6 +214,7 @@ def _attribute_value(attr: onnx.AttributeProto) -> ir.AttributeValue:
 
 
 def _value_type(value_info: onnx.ValueInfoProto) -> ir.TensorType:
+    """Return a tensor type, preserving unknown ranks and dynamic dimensions."""
     if not value_info.type.HasField("tensor_type"):
         raise NotImplementedError(f"ONNX value {value_info.name!r} is not a tensor")
     tensor_type = value_info.type.tensor_type
@@ -208,12 +229,14 @@ def _value_type(value_info: onnx.ValueInfoProto) -> ir.TensorType:
 
 
 def _tensor_data(proto: onnx.TensorProto) -> bytes:
+    """Return tensor contents as contiguous, little-endian, row-major bytes."""
     array = onnx.numpy_helper.to_array(proto)
     little_endian_dtype = array.dtype.newbyteorder("<")
     return array.astype(little_endian_dtype, copy=False).tobytes(order="C")
 
 
 def _tensor_type(proto: onnx.TensorProto) -> ir.TensorType:
+    """Return the tensor initializer type with its concrete dimensions."""
     scalar_type = _scalar_type(proto.data_type)
     return ir.TensorType(
         element_type=scalar_type,
@@ -222,6 +245,7 @@ def _tensor_type(proto: onnx.TensorProto) -> ir.TensorType:
 
 
 def _scalar_type(proto: onnx.TensorProto.DataType | int) -> ir.ScalarType:
+    """Return the corresponding Niro scalar type, rejecting unsupported types."""
     scalar_types: dict[int, ir.ScalarType] = {
         onnx.TensorProto.BOOL: ir.ScalarType.BOOL,
         onnx.TensorProto.INT32: ir.ScalarType.I32,
@@ -236,6 +260,7 @@ def _scalar_type(proto: onnx.TensorProto.DataType | int) -> ir.ScalarType:
 
 
 def _collect_types(graph: onnx.GraphProto) -> dict[OnnxValueName, ir.Type]:
+    """Return declared input, intermediate, and output tensor types by ONNX name."""
     onnx_values = (
         *graph.input,
         *graph.value_info,

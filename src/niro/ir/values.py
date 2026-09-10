@@ -11,6 +11,7 @@ from typing import NewType
 from niro.ir.types import Type
 
 ValueId = NewType("ValueId", int)
+"""A nonnegative SSA identifier, unique among definitions within a function."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +22,7 @@ class Value:
     type: Type
 
     def __post_init__(self) -> None:
+        """Reject negative SSA value IDs."""
         if self.id < 0:
             raise ValueError("value ID must be nonnegative")
 
@@ -41,6 +43,7 @@ class ValueSupply:
     next_id: int = 0
 
     def __post_init__(self) -> None:
+        """Reject a negative initial allocation position."""
         if self.next_id < 0:
             raise ValueError("next value ID must be nonnegative")
 

@@ -64,6 +64,9 @@
               echo ":: Test with branch coverage"
               uv run --no-sync coverage run --branch --source=niro -m pytest tests/unit
 
+              echo ":: Test properties with branch coverage"
+              uv run --no-sync coverage run --append --branch --source=niro -m pytest tests/property
+
               echo ":: Report coverage"
               uv run --no-sync coverage report
 

@@ -4,7 +4,8 @@ Conversion names are relative to Niro IR: `from_onnx` converts an ONNX model
 to Niro IR, and `to_mlir` converts Niro IR to an MLIR module.
 
 Use [`niro.ir`][] for IR definitions, [`niro.builder`][] for construction,
-[`niro.rewrite`][] for functional edits, and [`niro.verify`][] for verification.
+[`niro.rewrite`][] for functional edits, [`niro.optimizations`][] for optimization
+passes, and [`niro.verify`][] for verification.
 
 ```python
 import niro
@@ -16,7 +17,7 @@ text = niro.format_mlir(mlir_module)
 ```
 """
 
-from niro import builder, ir, rewrite, verify
+from niro import builder, ir, optimizations, rewrite, verify
 from niro.mlir import format_mlir, to_mlir, write_mlir
 from niro.onnx import from_onnx
 
@@ -25,6 +26,7 @@ __all__ = [
     "format_mlir",
     "from_onnx",
     "ir",
+    "optimizations",
     "rewrite",
     "to_mlir",
     "verify",

@@ -89,6 +89,7 @@ class InsertPoint:
     index: int
 
     def __post_init__(self) -> None:
+        """Reject indices outside the gaps of the referenced block."""
         if not 0 <= self.index <= len(self.block.operations):
             raise ValueError("insertion index is outside the block")
 
@@ -601,6 +602,7 @@ def replace_ops(
         return function
 
     def edit_block(block: ir.Block) -> ir.Block:
+        """Return a block with insertions and removals applied recursively."""
         operations: list[ir.Op] = []
         for index, op in enumerate(block.operations):
             if at is not None and block is at.block and index == at.index:
@@ -612,6 +614,7 @@ def replace_ops(
         return dataclasses.replace(block, operations=operations)
 
     def edit_region(region: ir.Region) -> ir.Region:
+        """Return a region with edits applied to its blocks and nested regions."""
         return map_blocks(region, edit_block)
 
     body = edit_region(function.body)
@@ -820,6 +823,7 @@ def clone_region(
     mapping = dict(captures) | renamed
 
     def clone_block(block: ir.Block) -> ir.Block:
+        """Copy a block with renamed definitions, operands, and nested regions."""
         operations = []
         for op in block.operations:
             copied = with_operands(
@@ -836,6 +840,7 @@ def clone_region(
         )
 
     def clone(body: ir.Region) -> ir.Region:
+        """Return a region copied with the shared definition and capture mapping."""
         return map_blocks(body, clone_block)
 
     copied = clone(region)
@@ -844,6 +849,7 @@ def clone_region(
 
 
 def _with_results(op: ir.Op, results: tuple[ir.Value, ...]) -> ir.Op:
+    """Copy an operation with supplied results, assuming the original result arity."""
     match op:
         case (
             ir.Const()
@@ -867,7 +873,14 @@ def _substitute(
     mapping: Mapping[ir.ValueId, ir.Value],
     where: Callable[[ir.Use], bool] | None = None,
 ) -> ir.Region:
+    """Return a region with simultaneous, optionally filtered operand substitutions.
+
+    Recurse into nested regions without changing definitions or checking SSA
+    validity. The predicate sees operand slots on original operations.
+    """
+
     def transform(block: ir.Block) -> ir.Block:
+        """Copy a block with selected operands and nested-region uses substituted."""
         operations = []
         for op in block.operations:
             operands = tuple(
@@ -886,6 +899,7 @@ def _substitute(
 
 
 def _definitions(region: ir.Region) -> dict[ir.ValueId, ir.Value]:
+    """Return definitions keyed by ID, rejecting duplicates across nested regions."""
     definitions: dict[ir.ValueId, ir.Value] = {}
     for value in ir.iter_defined_values(region):
         if value.id in definitions:
@@ -897,6 +911,7 @@ def _definitions(region: ir.Region) -> dict[ir.ValueId, ir.Value]:
 def _check_mapping(
     function: ir.Function, mapping: Mapping[ir.ValueId, ir.Value]
 ) -> None:
+    """Reject replacement sources absent from the function or with different types."""
     if not mapping:
         return
     definitions = {} if function.body is None else _definitions(function.body)
@@ -912,6 +927,11 @@ def _check_mapping(
 def _check_references(
     function: ir.Function, mapping: Mapping[ir.ValueId, ir.Value]
 ) -> None:
+    """Reject duplicate definitions, dangling references, and reference type mismatches.
+
+    Check both operands and replacement values against the resulting function;
+    region scope and dominance are left to the caller.
+    """
     if function.body is None:
         return
     definitions = _definitions(function.body)

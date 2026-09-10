@@ -62,12 +62,14 @@ def format_signature(function: Function) -> str:
 
 
 def _expanded_outputs(prefix: str, outputs: list[str]) -> str:
+    """Return a signature suffix with each output on its own indented line."""
     return "\n".join([f"{prefix} -> (", *[f"  {item}," for item in outputs], ")"])
 
 
 def _items(
     types: tuple[ir.Type, ...], names: tuple[str | None, ...] | None
 ) -> list[str]:
+    """Return formatted types with optional names; supplied arities must match."""
     resolved_names = names if names is not None else (None,) * len(types)
     return [
         f"{name}: {_format_type(value_type)}"
@@ -78,6 +80,7 @@ def _items(
 
 
 def _format_type(value_type: ir.Type) -> str:
+    """Return a scalar or tensor spelling, using `?` for dynamic dimensions."""
     if isinstance(value_type, ir.ScalarType):
         return value_type.value
     if value_type.shape is None:

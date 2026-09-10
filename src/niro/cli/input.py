@@ -10,12 +10,18 @@ import typer
 
 
 class InputFormat(enum.StrEnum):
+    """Supported model serialization formats accepted by the CLI."""
+
     ONNX = "onnx"
 
 
 def resolve_input_format(
     input_path: Path | None, input_format: InputFormat | None
 ) -> InputFormat:
+    """Return the explicit format or infer ONNX from a file suffix.
+
+    Raise `typer.BadParameter` when stdin or an unknown suffix lacks a format.
+    """
     if input_format is not None:
         return input_format
     if input_path is None or input_path == Path("-"):
@@ -30,6 +36,7 @@ def resolve_input_format(
 
 
 def load_model(input_path: Path | None, input_format: InputFormat) -> onnx.ModelProto:
+    """Read and return an ONNX model from a path or binary stdin."""
     match input_format:
         case InputFormat.ONNX:
             if input_path is None or input_path == Path("-"):

@@ -25,12 +25,13 @@ data = { scripts = "scripts/bin" }
 
 [dependency-groups]
 dev = [
-    "coverage>=7.15.4",
-    "mkdocstrings-python>=2.0.5",
+    "coverage>=7.16.0",
+    "hypothesis>=6.168.0",
+    "mkdocstrings-python>=2.0.8",
     "pytest>=9.1.1",
-    "ruff>=0.16.5",
-    "ty>=0.0.75",
-    "zensical>=0.0.58",
+    "ruff>=0.16.6",
+    "ty>=0.0.80",
+    "zensical>=0.0.60",
 ]
 
 [tool.pyright]

@@ -14,6 +14,7 @@ from niro.verify.data import _verify_literal
 
 
 def _verify_op(op: Op) -> None:
+    """Check operation-local types and attributes, raising on invalid IR."""
     match op:
         case ir.Const():
             _verify_literal(op.result.type, op.literal, context="constant")
@@ -40,6 +41,7 @@ def _verify_op(op: Op) -> None:
 
 
 def _verify_numeric_binary(op: Add | Mul) -> None:
+    """Require equal operand and result types with nonboolean elements."""
     name = "add" if isinstance(op, ir.Add) else "mul"
     if op.lhs.type != op.rhs.type or op.result.type != op.lhs.type:
         raise TypeError(f"{name} operands and result must have the same type")

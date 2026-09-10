@@ -29,6 +29,7 @@ def write_mlir(
 
 
 def _print_mlir(module: builtin.ModuleOp, stream: TextIO) -> None:
+    """Write the operation and its builtin resource metadata to the text stream."""
     printer = Printer(stream=stream)
     printer.print_op(module)
     printer.print_metadata([builtin.Builtin])
