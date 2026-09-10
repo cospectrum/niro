@@ -68,8 +68,12 @@ for Python objects and modules so generated API references are clickable.
 In public API annotations, use directly imported types (`Op` from
 `niro.ir.ops`) or fully qualified paths (`niro.ir.ops.Op`) so generated type
 links resolve. Avoid module aliases such as `ir.Op` in these annotations.
-Prefer namespace-qualified names such as `ir.*` in internal code, including
-function bodies and private annotations in the same file.
+
+When referencing Niro IR objects in internal code, prefer `ir.*`, including
+function bodies and private annotations. For standard-library and third-party
+imports, prefer module-qualified names in executable code, such as
+`collections.Counter`, and directly imported types in annotations, such as
+`Iterator` and `Mapping`.
 
 Generate API reference pages from public members using `filters: public` or
 filters that exclude private and internal names. Try not to enumerate `members`

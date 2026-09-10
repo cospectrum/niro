@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import Counter
+import collections
 from collections.abc import Mapping
 from typing import assert_never
 
@@ -38,7 +38,7 @@ def _verify_module(module_: ir.Module) -> None:
 
 def _verify_symbol_names(module: ir.Module) -> None:
     names = [symbol.name for symbol in [*module.functions, *module.globals]]
-    for name, count in Counter(names).items():
+    for name, count in collections.Counter(names).items():
         if not name:
             raise ValueError("module symbol names cannot be empty")
         if count > 1:
@@ -78,7 +78,7 @@ def _verify_interface_names(
 
 
 def _verify_value_ids(region: ir.Region) -> None:
-    counts = Counter(value.id for value in ir.iter_defined_values(region))
+    counts = collections.Counter(value.id for value in ir.iter_defined_values(region))
     for value_id, count in counts.items():
         if count > 1:
             raise ValueError(f"duplicate value ID in function: {value_id}")
