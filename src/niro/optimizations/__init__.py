@@ -6,6 +6,7 @@ across functions can coordinate edits over the whole module.
 """
 
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from niro.ir import VerifiedModule
 from niro.optimizations.transpose import simplify_transposes
@@ -22,3 +23,13 @@ immutable.
 
 This alias describes the pass contract; it does not perform verification.
 """
+
+if TYPE_CHECKING:
+    import typing
+
+    def _check_pass[**P](
+        fn: Callable[typing.Concatenate[VerifiedModule, P], VerifiedModule],
+    ) -> None:
+        pass
+
+    _check_pass(simplify_transposes)
