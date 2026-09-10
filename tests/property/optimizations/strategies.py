@@ -71,11 +71,12 @@ def populate(
 ) -> None:
     """Fill a fresh declaration with typed operations, captures and fresh IDs."""
     next_id = draw(st.integers(0, 10))
+    stride = draw(st.integers(1, 3))
 
     def fresh(type_: ir.Type) -> ir.Value:
         nonlocal next_id
         result = ir.Value(ir.ValueId(next_id), type_)
-        next_id += draw(st.integers(1, 3))
+        next_id += stride
         return result
 
     argument, condition = fresh(tensor), fresh(ir.ScalarType.BOOL)

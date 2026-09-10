@@ -26,11 +26,12 @@ def make_function(
 ) -> ir.Function:
     """Generate a function whose calls target already generated definitions."""
     next_id = draw(st.integers(0, 10))
+    stride = draw(st.integers(1, 3))
 
     def fresh(type_: ir.Type = ir.ScalarType.I32) -> ir.Value:
         nonlocal next_id
         result = ir.Value(ir.ValueId(next_id), type_)
-        next_id += draw(st.integers(1, 3))
+        next_id += stride
         return result
 
     x, y, condition = fresh(), fresh(), fresh(ir.ScalarType.BOOL)
