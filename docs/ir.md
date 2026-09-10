@@ -414,8 +414,10 @@ if_op = If(
 
 Both regions must yield the same number and types of values as `If.results`.
 An empty result tuple still requires both regions and their `Yield` terminators.
-`Branch` and `CondBranch` are restricted to function bodies. The `If` regions may use values visible before the `If`, but their local values cannot be
-used outside directly.
+`Return`, `Branch`, and `CondBranch` cannot appear directly in either arm.
+Other operations, including calls and nested `If` operations, follow their
+normal validity rules. The regions may use values visible before the `If`, but
+their local values cannot be used outside directly.
 
 ### `UnknownOp`
 

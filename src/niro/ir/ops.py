@@ -134,7 +134,8 @@ class If:
 
     Produce zero or more results. Both regions contain exactly one argument-free
     block ending in [`Yield`][niro.ir.Yield] with the result types. Branches may
-    capture values available before this operation.
+    capture values available before this operation. Return, Branch, and
+    CondBranch cannot appear directly in either region.
     """
 
     results: tuple[Value, ...]

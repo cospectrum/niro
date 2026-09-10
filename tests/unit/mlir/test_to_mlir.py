@@ -223,11 +223,9 @@ def parse_mlir(text: str) -> builtin.ModuleOp:
 
 @pytest.mark.parametrize("nested", [False, True])
 @pytest.mark.parametrize("flag", [False, True])
-def test_builder_optimizer_lowering_pipeline_preserves_loop_results(
+def test_builder_lowering_pipeline_preserves_loop_results(
     nested: bool, flag: bool
 ) -> None:
-    from niro import optimizations
-
     module = builder.ModuleBuilder()
     signature = ir.FunctionType(
         (ir.ScalarType.BOOL, ir.ScalarType.I32), (ir.ScalarType.I32,)
@@ -260,19 +258,17 @@ def test_builder_optimizer_lowering_pipeline_preserves_loop_results(
     else:
         caller.return_(*caller.call(helper, caller.raw.arguments))
     original = module.verify()
-    optimized = optimizations.inline_functions(original)
     expected = 7 if nested and not flag else (35 if flag else 21)
-    for source in (original, optimized):
-        lowered = niro.to_mlir(source)
-        assert not any(isinstance(op, scf.ExecuteRegionOp) for op in lowered.walk())
-        parsed = parse_mlir(niro.format_mlir(lowered))
-        parsed.verify()
-        interpreter = Interpreter(parsed)
-        for implementations in (
-            ArithFunctions(),
-            CfFunctions(),
-            FuncFunctions(),
-            ScfFunctions(),
-        ):
-            interpreter.register_implementations(implementations)
-        assert interpreter.call_op("caller", (flag, 7)) == (expected,)
+    lowered = niro.to_mlir(original)
+    assert not any(isinstance(op, scf.ExecuteRegionOp) for op in lowered.walk())
+    parsed = parse_mlir(niro.format_mlir(lowered))
+    parsed.verify()
+    interpreter = Interpreter(parsed)
+    for implementations in (
+        ArithFunctions(),
+        CfFunctions(),
+        FuncFunctions(),
+        ScfFunctions(),
+    ):
+        interpreter.register_implementations(implementations)
+    assert interpreter.call_op("caller", (flag, 7)) == (expected,)

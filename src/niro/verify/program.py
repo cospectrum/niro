@@ -126,7 +126,19 @@ def _verify_region(
         raise ValueError("if regions must contain exactly one block")
     if tuple(value.type for value in region.blocks[0].arguments) != input_types:
         raise TypeError("region argument types do not match expected input types")
-    dominators = _verify_cfg(region, terminator)
+    if terminator is ir.Yield:
+        block = region.blocks[0]
+        _verify_terminator(block, terminator)
+        _verify_block(
+            block,
+            outer_scope,
+            output_types,
+            terminator,
+            functions=functions,
+            globals_=globals_,
+        )
+        return
+    dominators = _verify_cfg(region)
     definitions = {
         block: {
             value.id: value.type
@@ -151,10 +163,25 @@ def _verify_region(
         )
 
 
-def _verify_cfg(
-    region: ir.Region, terminator: type[Terminator]
-) -> dict[ir.Block, set[ir.Block]]:
-    """Validate a nonempty region's edges and return its block dominator sets.
+def _verify_terminator(block: ir.Block, terminator: type[Terminator]) -> None:
+    """Require a final Yield in If arms, or a Return/branch in function blocks."""
+    allowed = (
+        (ir.Return, ir.Branch, ir.CondBranch)
+        if terminator is ir.Return
+        else (ir.Yield,)
+    )
+    if not block.operations or not isinstance(block.operations[-1], allowed):
+        suffix = " or a branch" if terminator is ir.Return else ""
+        raise ValueError(f"block must end with {terminator.__name__}{suffix}")
+    if any(
+        isinstance(op, (ir.Return, ir.Yield, ir.Branch, ir.CondBranch))
+        for op in block.operations[:-1]
+    ):
+        raise ValueError("unexpected block terminator")
+
+
+def _verify_cfg(region: ir.Region) -> dict[ir.Block, set[ir.Block]]:
+    """Validate a function body's edges and return its block dominator sets.
 
     Require reachable blocks and no edges to entry. Loops need not have an exit.
     Compute dominance by fixed-point predecessor intersection, independent of
@@ -163,15 +190,7 @@ def _verify_cfg(
     entry = region.blocks[0]
     predecessors: dict[ir.Block, set[ir.Block]] = {b: set() for b in region.blocks}
     for block in region.blocks:
-        if not block.operations or not isinstance(
-            block.operations[-1], (terminator, ir.Branch, ir.CondBranch)
-        ):
-            raise ValueError(f"block must end with {terminator.__name__} or a branch")
-        if any(
-            isinstance(op, (ir.Return, ir.Yield, ir.Branch, ir.CondBranch))
-            for op in block.operations[:-1]
-        ):
-            raise ValueError("unexpected block terminator")
+        _verify_terminator(block, ir.Return)
         op = block.operations[-1]
         edges: tuple[tuple[ir.Block, tuple[ir.Value, ...]], ...] = ()
         if isinstance(op, ir.Branch):

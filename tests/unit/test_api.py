@@ -79,3 +79,15 @@ def test_exports_mlir_output() -> None:
 
     assert niro.format_mlir is mlir.format_mlir
     assert niro.write_mlir is mlir.write_mlir
+
+
+def test_optimization_interface_accepts_a_verified_module_pass() -> None:
+    from niro import ir, optimizations, verify
+
+    def identity(module: ir.VerifiedModule) -> ir.VerifiedModule:
+        return module
+
+    pass_: optimizations.ModulePass = identity
+    module = verify.module(ir.Module())
+    assert pass_(module) is module
+    assert optimizations.__all__ == ["ModulePass"]

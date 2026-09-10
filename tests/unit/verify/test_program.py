@@ -759,3 +759,33 @@ def test_control_flow_ownership(scenario: str) -> None:
     module = _module_with_body(body.blocks, (flag.type,))
     with pytest.raises(ValueError, match="unique owner"):
         verify.module(module)
+
+
+@pytest.mark.parametrize("arm", ["then", "else"])
+@pytest.mark.parametrize("kind", ["branch", "conditional", "return"])
+@pytest.mark.parametrize("early", [False, True])
+def test_if_rejects_other_terminators(arm: str, kind: str, early: bool) -> None:
+    flag = ir.Value(ir.ValueId(0), ir.ScalarType.BOOL)
+    selected = ir.Block()
+    terminator: ir.Op = (
+        ir.Branch(selected)
+        if kind == "branch"
+        else ir.CondBranch(flag, selected, selected)
+        if kind == "conditional"
+        else ir.Return()
+    )
+    selected.operations = [terminator, ir.Yield()] if early else [terminator]
+    other = ir.Region([ir.Block(operations=[ir.Yield()])])
+    selected_region = ir.Region([selected])
+    conditional = ir.If(
+        (),
+        flag,
+        selected_region if arm == "then" else other,
+        selected_region if arm == "else" else other,
+    )
+    module = _module_with_body(
+        [ir.Block((flag,), [conditional, ir.Return()])], (flag.type,)
+    )
+    message = "unexpected block terminator" if early else "must end with Yield"
+    with pytest.raises(ValueError, match=message):
+        verify.module(module)

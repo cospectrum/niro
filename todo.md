@@ -1,5 +1,21 @@
 # TODO
 
+## Niro IR optimizations
+
+Candidates without identified stock MLIR/xDSL passes covering all frontends;
+related implementations exist. Recheck upstream support before implementing.
+
+- [ ] Specialize branches and shapes using guaranteed input contracts.
+- [ ] Precompute frozen weight transforms and constant preprocessing.
+- [ ] Recover LayerNorm and attention ops from equivalent decompositions.
+- [ ] Remove redundant layout conversions and packing across frontend boundaries.
+- [ ] Prune unrequested model outputs and their exclusive computations/parameters.
+- [ ] Share immutable parameters and pure computations across composed models.
+
+Related: [StableHLO](https://openxla.org/stablehlo/dynamism),
+[torch-mlir](https://github.com/llvm/torch-mlir/blob/main/python/torch_mlir/extras/fx_importer.py),
+[IREE](https://iree.dev/reference/mlir-passes/Preprocessing/).
+
 ## ONNX operations
 
 This is a rough implementation order based on how often each operation is likely to
