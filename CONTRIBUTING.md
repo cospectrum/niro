@@ -46,7 +46,9 @@ including `README.md` and `docs/index.md`. Keep shared content consistent.
 Keep [docs/ir.md](docs/ir.md) language agnostic: it defines the IR's concepts,
 structure, semantics, and validity rules. Do not add implementation details such
 as Python dataclasses, inheritance, runtime validation mechanisms, or accessor
-APIs. Document the Python API in docstrings and `docs/niro/ir/` instead.
+APIs. Document the Python API, including explanations and examples, in source
+docstrings. Keep pages under `docs/niro/` limited to API reference directives and
+their rendering options; do not add handwritten prose or examples there.
 
 Preview the documentation with Zensical while editing it:
 
@@ -66,8 +68,12 @@ for Python objects and modules so generated API references are clickable.
 In public API annotations, use directly imported types (`Op` from
 `niro.ir.ops`) or fully qualified paths (`niro.ir.ops.Op`) so generated type
 links resolve. Avoid module aliases such as `ir.Op` in these annotations.
-Prefer namespace-qualified names such as `ir.*` in internal code, including
-function bodies and private annotations in the same file.
+
+When referencing Niro IR objects in internal code, prefer `ir.*`, including
+function bodies and private annotations. For standard-library and third-party
+imports, prefer module-qualified names in executable code, such as
+`collections.Counter`, and directly imported types in annotations, such as
+`Iterator` and `Mapping`.
 
 Generate API reference pages from public members using `filters: public` or
 filters that exclude private and internal names. Try not to enumerate `members`

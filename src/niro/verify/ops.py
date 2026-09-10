@@ -2,22 +2,21 @@
 
 from __future__ import annotations
 
-import math
 from typing import assert_never
 
 from niro import ir
 from niro.ir.ops import (
     Add,
-    Const,
     Mul,
     Op,
 )
+from niro.verify.data import _verify_literal
 
 
 def _verify_op(op: Op) -> None:
     match op:
         case ir.Const():
-            _verify_const(op)
+            _verify_literal(op.result.type, op.literal, context="constant")
         case ir.Add() | ir.Mul():
             _verify_numeric_binary(op)
         case ir.MatMul():
@@ -38,33 +37,6 @@ def _verify_op(op: Op) -> None:
             pass
         case _ as unreachable:
             assert_never(unreachable)
-
-
-def _verify_const(op: Const) -> None:
-    match op.result.type:
-        case ir.ScalarType.BOOL if isinstance(op.literal, bool):
-            pass
-        case ir.ScalarType.I32 | ir.ScalarType.I64 if isinstance(
-            op.literal, int
-        ) and not isinstance(op.literal, bool):
-            pass
-        case ir.ScalarType.F32 | ir.ScalarType.F64 if isinstance(op.literal, float):
-            pass
-        case ir.TensorType(element_type, shape) if (
-            isinstance(op.literal, bytes)
-            and shape is not None
-            and all(dimension is not None for dimension in shape)
-        ):
-            size = math.prod(dimension for dimension in shape if dimension is not None)
-            expected = size * element_type.byte_width
-            if len(op.literal) != expected:
-                raise ValueError(
-                    f"tensor constant has {len(op.literal)} bytes, expected {expected}"
-                )
-        case ir.TensorType():
-            raise TypeError("tensor constant requires packed bytes and a static shape")
-        case _:
-            raise TypeError("constant value does not match its result type")
 
 
 def _verify_numeric_binary(op: Add | Mul) -> None:

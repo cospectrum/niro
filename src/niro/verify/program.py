@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from collections import Counter
-from collections.abc import Iterator, Mapping
+import collections
+from collections.abc import Mapping
 from typing import assert_never
 
 from niro import ir
 from niro.ir.program import Module, VerifiedModule
+from niro.verify.data import _verify_literal
 from niro.verify.ops import _verify_op
 
 __all__ = ["module"]
@@ -23,6 +24,12 @@ def module(module_: Module) -> VerifiedModule:
 
 def _verify_module(module_: ir.Module) -> None:
     _verify_symbol_names(module_)
+    for global_ in module_.globals:
+        _verify_literal(
+            global_.type,
+            global_.initializer,
+            context=f"global {global_.name!r} initializer",
+        )
     functions = {function.name: function for function in module_.functions}
     globals_ = {global_.name: global_ for global_ in module_.globals}
     for function in module_.functions:
@@ -31,7 +38,7 @@ def _verify_module(module_: ir.Module) -> None:
 
 def _verify_symbol_names(module: ir.Module) -> None:
     names = [symbol.name for symbol in [*module.functions, *module.globals]]
-    for name, count in Counter(names).items():
+    for name, count in collections.Counter(names).items():
         if not name:
             raise ValueError("module symbol names cannot be empty")
         if count > 1:
@@ -70,18 +77,8 @@ def _verify_interface_names(
         raise ValueError(f"{kind} names cannot be empty")
 
 
-def _iter_defined_values(region: ir.Region) -> Iterator[ir.Value]:
-    for block in region.blocks:
-        yield from block.arguments
-        for op in block.operations:
-            yield from ir.get_results(op)
-            if isinstance(op, ir.If):
-                yield from _iter_defined_values(op.then_region)
-                yield from _iter_defined_values(op.else_region)
-
-
 def _verify_value_ids(region: ir.Region) -> None:
-    counts = Counter(value.id for value in _iter_defined_values(region))
+    counts = collections.Counter(value.id for value in ir.iter_defined_values(region))
     for value_id, count in counts.items():
         if count > 1:
             raise ValueError(f"duplicate value ID in function: {value_id}")

@@ -63,7 +63,13 @@ class Function:
 
 @dataclass(slots=True)
 class Global:
-    """An immutable, initialized value in the module symbol table."""
+    """An immutable, initialized value in the module symbol table.
+
+    The initializer must match the declared type, using the same literal rules
+    as [`Const`][niro.ir.ops.Const]. Tensor initializers require a static shape
+    and exactly its element count times the element byte width in packed bytes.
+    [`niro.verify.module`][] checks every global, including unused globals.
+    """
 
     name: SymbolName
     type: Type
