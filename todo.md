@@ -22,8 +22,8 @@ This is a rough implementation order based on how often each operation is likely
 appear in ONNX models. The percentages are estimates, not measured statistics, and
 will vary between model families.
 
-`Done` operations have native Niro equivalents. `Todo` operations are currently
-imported as `UnknownOp`.
+`Done` operations have native Niro equivalents within the supported type/shape
+subset. `Todo` operations use `UnknownOp` when their inputs and attributes are supported.
 
 | Estimated prevalence | Status | Operation |
 | ---: | :---: | --- |
@@ -114,7 +114,7 @@ imported as `UnknownOp`.
 | 3% | Todo | `CumSum` |
 | 3% | Todo | `GreaterOrEqual` |
 | 3% | Todo | `HardSwish` |
-| 3% | Todo | `If` |
+| 3% | Done | `If` |
 | 3% | Todo | `LessOrEqual` |
 | 3% | Todo | `LogSoftmax` |
 | 3% | Todo | `Loop` |
