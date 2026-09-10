@@ -71,6 +71,8 @@ plugins:
           paths: [src]
           options:
             docstring_style: google
+            docstring_options:
+              returns_multiple_items: false
             members_order: source
             merge_init_into_class: true
             separate_signature: true
