@@ -16,21 +16,36 @@ if TYPE_CHECKING:
     from niro.ir.ops import Op
 
 SymbolName = str
+"""A module symbol name, required to be nonempty and unique by verification."""
 
 
 @dataclass(slots=True)
 class Block:
+    """An ordered sequence of operations with SSA arguments defined at entry.
+
+    A verified block ends with its region's terminator and defines values
+    before their uses, allowing captures from enclosing regions.
+    """
+
     arguments: tuple[Value, ...] = ()
     operations: list[Op] = field(default_factory=list)
 
 
 @dataclass(slots=True)
 class Region:
+    """A sequence of blocks owned by a function or operation.
+
+    Verification currently requires exactly one block; builders may hold
+    empty regions while constructing a program.
+    """
+
     blocks: list[Block] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
 class FunctionType:
+    """Ordered input and output types forming a function signature."""
+
     inputs: tuple[Type, ...]
     outputs: tuple[Type, ...]
 
@@ -53,6 +68,7 @@ class Function:
 
     @property
     def first_block(self) -> Block | None:
+        """Return the body's first block, or None if no body or block exists."""
         if not self.body:
             return None
         body = self.body
@@ -79,6 +95,11 @@ class Global:
 
 @dataclass(slots=True)
 class Module:
+    """Functions and immutable globals sharing a symbol table, with metadata.
+
+    Verification requires nonempty names unique across both symbol kinds.
+    """
+
     functions: list[Function] = field(default_factory=list)
     globals: list[Global] = field(default_factory=list)
     attributes: Attributes = field(default_factory=dict)

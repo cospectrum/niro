@@ -85,6 +85,7 @@ def simplify_transposes(module: VerifiedModule) -> VerifiedModule:
 
 
 def _simplify_function(function: ir.Function) -> ir.Function:
+    """Return a function with nested transposes simplified to a fixed point."""
     if function.body is None:
         return function
     while True:
@@ -103,6 +104,11 @@ def _simplify_function(function: ir.Function) -> ir.Function:
 
 
 def _simplify_transpose(function: ir.Function, op: ir.Transpose) -> ir.Function:
+    """Return a function with an identity transpose removed or a chain composed.
+
+    Preserve the input when no rewrite applies, including unknown-rank operands.
+    Remove the producer only when every use belongs to the rewritten consumer.
+    """
     tensor = op.operand.type
     assert isinstance(tensor, ir.TensorType)
     if tensor.rank is None:

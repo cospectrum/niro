@@ -30,6 +30,14 @@ Test meaningful behavior and invariants. Unit tests mirror `src/` under
   allocators) or resource lifecycles; avoid inheritance and classes that merely
   group functions.
 - Prefer guard clauses and early returns over nesting.
+- Every function and type defined under `src/` must have a docstring, including
+  private helpers, methods, classes, and type aliases. For functions, explain
+  what they do and return, and any non-obvious assumptions or side effects.
+  For types, explain what they represent and their invariants; place alias
+  docstrings immediately after the declaration. A concise sentence is enough
+  for simple definitions.
+  Docstrings must describe the actual implementation and be updated in the same
+  change whenever the behavior or contract changes.
 - Type-hint all Python code. Trust annotations; reserve runtime type checks for
   external inputs and narrowing unions. Derive redundant information instead
   of storing it.

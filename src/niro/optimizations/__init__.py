@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     def _type_check_pass[**P](
         fn: Callable[typing.Concatenate[VerifiedModule, P], VerifiedModule],
     ) -> None:
-        pass
+        """Check a pass signature statically without invoking the pass."""
 
     _type_check_pass(inline_functions)
     _type_check_pass(simplify_transposes)

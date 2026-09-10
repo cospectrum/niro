@@ -60,16 +60,21 @@ class Builder[T]:
 
 
 class ModuleCtx:
+    """Symbol resolution over the shared module currently being built."""
+
     def __init__(self, module: Module) -> None:
+        """Retain the module for symbol lookup as its declarations change."""
         self._module = module
 
     def resolve_function(self, name: SymbolName) -> Function | None:
+        """Return the first function with this name, or None if undeclared."""
         for function in self._module.functions:
             if function.name == name:
                 return function
         return None
 
     def resolve_global(self, name: SymbolName) -> Global | None:
+        """Return the first global with this name, or None if undeclared."""
         for global_ in self._module.globals:
             if global_.name == name:
                 return global_
@@ -77,12 +82,16 @@ class ModuleCtx:
 
 
 class FunctionCtx(ModuleCtx):
+    """Module lookup and a shared SSA allocator for one function's builders."""
+
     def __init__(self, module: Module, function: Function) -> None:
+        """Retain the function and module, starting SSA allocation at zero."""
         super().__init__(module)
         self.function = function
         self._values = ir.ValueSupply()
 
     def new_value(self, type: Type) -> Value:
+        """Return a fresh typed SSA value and advance the function's allocator."""
         return self._values.fresh(type)
 
 
@@ -90,6 +99,7 @@ class ModuleBuilder(Builder[Module]):
     """Builder for [`niro.ir.Module`][]."""
 
     def __init__(self) -> None:
+        """Create an empty module to populate through this builder."""
         self.raw: Module = ir.Module()
         """The [`niro.ir.Module`][] under construction."""
 
@@ -136,6 +146,7 @@ class FunctionBuilder(Builder[Function]):
         ctx: FunctionCtx,
         function: Function,
     ) -> None:
+        """Wrap a function with its shared construction context."""
         self._ctx = ctx
         self.raw: Function = function
 
@@ -156,6 +167,7 @@ class FunctionRegionBuilder(Builder[Region]):
     """
 
     def __init__(self, ctx: FunctionCtx, region: Region) -> None:
+        """Wrap a body region with its function's shared construction context."""
         self._ctx = ctx
         self.raw: Region = region
 
@@ -182,6 +194,7 @@ class IfRegionBuilder(Builder[Region]):
     """
 
     def __init__(self, ctx: FunctionCtx, region: Region) -> None:
+        """Wrap a branch region with its function's shared construction context."""
         self._ctx = ctx
         self.raw: Region = region
 
@@ -207,6 +220,7 @@ class BlockBuilder(Builder[Block]):
         ctx: FunctionCtx,
         block: Block,
     ) -> None:
+        """Wrap a block with its function's shared construction context."""
         self._ctx = ctx
         self.raw: Block = block
 
@@ -215,6 +229,11 @@ class BlockBuilder(Builder[Block]):
         result_types: Sequence[Type],
         create_op: Callable[[tuple[Value, ...]], OpT],
     ) -> OpT:
+        """Allocate results, build an operation, append it, and return it.
+
+        The callback receives fresh values in result_types order. Allocation
+        advances even if the callback raises; appending occurs only on success.
+        """
         results = tuple(self._ctx.new_value(type) for type in result_types)
         op = create_op(results)
         self.raw.operations.append(op)
@@ -224,6 +243,7 @@ class BlockBuilder(Builder[Block]):
         """Append a constant and return its result."""
 
         def create(results: tuple[Value, ...]) -> Const:
+            """Return a constant defining the single allocated result."""
             (result,) = results
             return ir.Const(result=result, literal=literal)
 
@@ -250,6 +270,7 @@ class BlockBuilder(Builder[Block]):
             raise ValueError(f"type is required for unknown global: {name!r}")
 
         def create(results: tuple[Value, ...]) -> GetGlobal:
+            """Return a global read defining the single allocated result."""
             (result,) = results
             return ir.GetGlobal(name=name, result=result)
 
@@ -284,6 +305,7 @@ class BlockBuilder(Builder[Block]):
         """Append an addition and return its result."""
 
         def create(results: tuple[Value, ...]) -> Add:
+            """Return an addition defining the single allocated result."""
             (result,) = results
             return ir.Add(result=result, lhs=lhs, rhs=rhs)
 
@@ -294,6 +316,7 @@ class BlockBuilder(Builder[Block]):
         """Append a multiplication and return its result."""
 
         def create(results: tuple[Value, ...]) -> Mul:
+            """Return a multiplication defining the single allocated result."""
             (result,) = results
             return ir.Mul(result=result, lhs=lhs, rhs=rhs)
 
@@ -305,6 +328,7 @@ class BlockBuilder(Builder[Block]):
         type = ir.infer.matmul_result_type(lhs.type, rhs.type)
 
         def create(results: tuple[Value, ...]) -> MatMul:
+            """Return a matrix multiplication defining the single allocated result."""
             (result,) = results
             return ir.MatMul(result=result, lhs=lhs, rhs=rhs)
 
@@ -321,6 +345,7 @@ class BlockBuilder(Builder[Block]):
         type = ir.infer.transpose_result_type(operand.type, permutation)
 
         def create(results: tuple[Value, ...]) -> Transpose:
+            """Return a transpose defining the single allocated result."""
             (result,) = results
             return ir.Transpose(
                 result=result,
@@ -342,6 +367,7 @@ class BlockBuilder(Builder[Block]):
         operands = tuple(operands)
 
         def create(results: tuple[Value, ...]) -> UnknownOp:
+            """Return an unknown operation with allocated results and copied attributes."""
             return ir.UnknownOp(
                 name=name,
                 operands=operands,
@@ -362,6 +388,7 @@ class BlockBuilder(Builder[Block]):
         else_region = IfRegionBuilder(self._ctx, ir.Region())
 
         def create(results: tuple[Value, ...]) -> If:
+            """Return a conditional owning the new branch regions and allocated results."""
             return ir.If(
                 results=results,
                 condition=condition,
@@ -402,6 +429,7 @@ class BlockBuilder(Builder[Block]):
             )
 
         def create(results: tuple[Value, ...]) -> Call:
+            """Return a call using the resolved name and allocated results."""
             return ir.Call(
                 callee=name,
                 arguments=tuple(arguments),
@@ -415,6 +443,7 @@ class BlockBuilder(Builder[Block]):
         """Terminate the block by returning values from the function."""
 
         def create(results: tuple[Value, ...]) -> Return:
+            """Return a function terminator; the allocated result tuple is unused."""
             return ir.Return(operands=operands)
 
         self._append_operation([], create)
@@ -423,6 +452,7 @@ class BlockBuilder(Builder[Block]):
         """Terminate the block by yielding values from a nested region."""
 
         def create(results: tuple[Value, ...]) -> Yield:
+            """Return a region terminator; the allocated result tuple is unused."""
             return ir.Yield(operands=operands)
 
         self._append_operation([], create)
@@ -443,6 +473,7 @@ class IfBuilder(Builder[If]):
         then_region: IfRegionBuilder,
         else_region: IfRegionBuilder,
     ) -> None:
+        """Wrap a conditional and retain builders for its two branch regions."""
         self.raw: If = if_
         self.then_region: IfRegionBuilder = then_region
         self.else_region: IfRegionBuilder = else_region

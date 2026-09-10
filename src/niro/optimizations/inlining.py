@@ -135,6 +135,21 @@ def inline_functions(
 def _recursive_functions(
     graph: Mapping[ir.SymbolName, set[ir.SymbolName]],
 ) -> set[ir.SymbolName]:
+    """Return the names of functions that can call themselves, directly or indirectly.
+
+    Follow each function's calls to see whether any chain leads back to that
+    function. For example, if `a` calls `b` and `b` calls `a`, return both names.
+    A function that only calls into this cycle is not itself recursive.
+
+    Args:
+        graph: Map each function name to the names of functions it calls directly.
+            Every called function must also be a key, with an empty set if it
+            calls no functions. The mapping and its sets are not modified.
+
+    Returns:
+        Names belonging to at least one call cycle, including direct self-calls.
+        The inliner excludes these functions as callees to avoid repeated expansion.
+    """
     recursive: set[ir.SymbolName] = set()
     for name, callees in graph.items():
         pending = list(callees)
@@ -154,6 +169,11 @@ def _recursive_functions(
 def _inline_calls(
     function: ir.Function, callees: Mapping[ir.SymbolName, ir.Function]
 ) -> ir.Function:
+    """Return a function with all calls to eligible callees inlined recursively.
+
+    The eligible callee mapping must exclude recursive definitions. Preserve the
+    input function when no call changes.
+    """
     if function.body is None:
         return function
     supply = rewrite.value_supply(function)
@@ -175,6 +195,11 @@ def _inline_call(
     callee: ir.Function,
     supply: ir.ValueSupply,
 ) -> ir.Function:
+    """Return a function with one call replaced by a cloned callee body.
+
+    The callee must have a single-block definition ending in `Return`. Consume
+    fresh IDs from the supply and redirect call results to cloned return values.
+    """
     assert callee.body is not None
     (block,) = callee.body.blocks
     # Omitting the parameters makes them captures that cloning can substitute.

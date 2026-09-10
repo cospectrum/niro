@@ -14,6 +14,7 @@ from niro.verify.ops import _verify_op
 __all__ = ["module"]
 
 type Terminator = ir.Return | ir.Yield
+"""A region-ending operation: a function return or a nested-region yield."""
 
 
 def module(module_: Module) -> VerifiedModule:
@@ -23,6 +24,7 @@ def module(module_: Module) -> VerifiedModule:
 
 
 def _verify_module(module_: ir.Module) -> None:
+    """Validate module symbols, global literals, and every function definition."""
     _verify_symbol_names(module_)
     for global_ in module_.globals:
         _verify_literal(
@@ -37,6 +39,7 @@ def _verify_module(module_: ir.Module) -> None:
 
 
 def _verify_symbol_names(module: ir.Module) -> None:
+    """Reject empty or duplicate names across functions and globals."""
     names = [symbol.name for symbol in [*module.functions, *module.globals]]
     for name, count in collections.Counter(names).items():
         if not name:
@@ -50,6 +53,7 @@ def _verify_function(
     functions: Mapping[ir.SymbolName, ir.Function],
     globals_: Mapping[ir.SymbolName, ir.Global],
 ) -> None:
+    """Validate interface names and, for definitions, body values and structure."""
     _verify_interface_names("input", function.input_names, len(function.type.inputs))
     _verify_interface_names("output", function.output_names, len(function.type.outputs))
     if function.body is None:
@@ -69,6 +73,7 @@ def _verify_function(
 def _verify_interface_names(
     kind: str, names: tuple[str | None, ...] | None, arity: int
 ) -> None:
+    """Require supplied names to match arity and forbid empty-string names."""
     if names is None:
         return
     if len(names) != arity:
@@ -78,6 +83,7 @@ def _verify_interface_names(
 
 
 def _verify_value_ids(region: ir.Region) -> None:
+    """Reject repeated value definitions across a function and its nested regions."""
     counts = collections.Counter(value.id for value in ir.iter_defined_values(region))
     for value_id, count in counts.items():
         if count > 1:
@@ -94,6 +100,7 @@ def _verify_region(
     functions: Mapping[ir.SymbolName, ir.Function],
     globals_: Mapping[ir.SymbolName, ir.Global],
 ) -> None:
+    """Require a single block with the expected inputs and validate its contents."""
     if not region.blocks:
         raise ValueError("region must contain a block")
     if len(region.blocks) != 1:
@@ -120,6 +127,11 @@ def _verify_block(
     functions: Mapping[ir.SymbolName, ir.Function],
     globals_: Mapping[ir.SymbolName, ir.Global],
 ) -> None:
+    """Validate scoped operands, symbols, nested regions, and the final terminator.
+
+    Outer bindings remain unchanged; each result becomes visible only after its
+    operation has been checked.
+    """
     scope = {**outer_scope, **{value.id: value.type for value in block.arguments}}
     if not block.operations or not isinstance(block.operations[-1], terminator):
         raise ValueError(f"region must end with {terminator.__name__}")

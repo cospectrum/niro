@@ -8,6 +8,7 @@ from niro import ir
 
 
 def _verify_literal(type_: ir.Type, literal: ir.Literal, *, context: str) -> None:
+    """Validate a literal against its type, including static tensor byte length."""
     match type_:
         case ir.ScalarType.BOOL if isinstance(literal, bool):
             pass
