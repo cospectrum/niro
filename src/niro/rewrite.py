@@ -95,13 +95,46 @@ class ValueSupply:
 
 
 def value_supply(function: Function) -> ValueSupply:
-    """Create a supply above every definition ID, including nested regions."""
+    """Create a supply above every definition ID, including nested regions.
+
+    Examples:
+        Start allocating after an existing function's highest value ID:
+
+        ```python
+        from niro import ir, rewrite
+
+        x = ir.Value(ir.ValueId(7), ir.ScalarType.I32)
+        function = ir.Function(
+            "identity", ir.FunctionType((x.type,), (x.type,)),
+            ir.Region([ir.Block((x,), [ir.Return((x,))])]),
+        )
+        supply = rewrite.value_supply(function)
+        assert supply.next_id == 8
+        ```
+    """
     values = () if function.body is None else ir.iter_defined_values(function.body)
     return ValueSupply(1 + max((value.id for value in values), default=-1))
 
 
 def fresh_value(supply: ValueSupply, type: Type) -> tuple[Value, ValueSupply]:
-    """Return a fresh typed value and the advanced supply, without changing either input."""
+    """Return a fresh typed value and the advanced supply, without changing either input.
+
+    Examples:
+        Thread the returned supply through successive allocations. Allocating a
+        value does not define it; use it as an operation result or block argument:
+
+        ```python
+        from niro import ir, rewrite
+
+        initial = rewrite.ValueSupply(10)
+        first, supply = rewrite.fresh_value(initial, ir.ScalarType.I32)
+        second, supply = rewrite.fresh_value(supply, ir.ScalarType.I32)
+        constant = ir.Const(first, 3)
+        doubled = ir.Add(second, first, first)
+        assert (first.id, second.id, supply.next_id) == (10, 11, 12)
+        assert initial.next_id == 10
+        ```
+    """
     return ir.Value(ir.ValueId(supply.next_id), type), ValueSupply(supply.next_id + 1)
 
 
@@ -110,6 +143,21 @@ def with_operands(op: Op, operands: Sequence[Value]) -> Op:
 
     Require the same arity. Definitions, nested regions, and other fields are
     preserved. This low-level helper permits type changes for coordinated edits.
+
+    Examples:
+        Swap an addition's operands while preserving its result:
+
+        ```python
+        from niro import ir, rewrite
+
+        x, y, result = (
+            ir.Value(ir.ValueId(i), ir.ScalarType.I32) for i in range(3)
+        )
+        original = ir.Add(result, x, y)
+        swapped = rewrite.with_operands(original, (y, x))
+        assert swapped == ir.Add(result, y, x)
+        assert original == ir.Add(result, x, y)
+        ```
     """
     operands = tuple(operands)
     if len(operands) != len(ir.get_operands(op)):
@@ -138,6 +186,33 @@ def map_regions(op: Op, transform: Callable[[Region], Region]) -> Op:
 
     The callback must not mutate its input. Operations without regions are
     returned unchanged. No SSA verification is performed.
+
+    Examples:
+        Complete both empty branches of an If with Yield terminators:
+
+        ```python
+        import dataclasses
+        from niro import ir, rewrite
+
+        condition = ir.Value(ir.ValueId(0), ir.ScalarType.BOOL)
+        branch = ir.If(
+            (), condition, ir.Region([ir.Block()]), ir.Region([ir.Block()])
+        )
+
+        def finish(region: ir.Region) -> ir.Region:
+            return rewrite.map_blocks(
+                region,
+                lambda block: dataclasses.replace(
+                    block, operations=[*block.operations, ir.Yield()]
+                ),
+            )
+
+        completed = rewrite.map_regions(branch, finish)
+        assert isinstance(completed, ir.If)
+        assert completed.then_region.blocks[0].operations == [ir.Yield()]
+        assert completed.else_region.blocks[0].operations == [ir.Yield()]
+        assert branch.then_region.blocks[0].operations == []
+        ```
     """
     regions = tuple(transform(region) for region in ir.get_regions(op))
     match op:
@@ -168,6 +243,26 @@ def map_blocks(region: Region, transform: Callable[[Block], Block]) -> Region:
     """Transform immediate blocks in order; recursion is explicit.
 
     The callback must not mutate its input. No SSA verification is performed.
+
+    Examples:
+        Complete an unfinished function body with a Return terminator:
+
+        ```python
+        import dataclasses
+        from niro import ir, rewrite
+
+        result = ir.Value(ir.ValueId(0), ir.ScalarType.I32)
+        constant = ir.Const(result, 42)
+        body = ir.Region([ir.Block(operations=[constant])])
+        completed = rewrite.map_blocks(
+            body,
+            lambda block: dataclasses.replace(
+                block, operations=[*block.operations, ir.Return((result,))]
+            ),
+        )
+        assert completed.blocks[0].operations == [constant, ir.Return((result,))]
+        assert body.blocks[0].operations == [constant]
+        ```
     """
     return dataclasses.replace(
         region, blocks=[transform(block) for block in region.blocks]
@@ -197,6 +292,37 @@ def replace_uses(
 
     Raises:
         ValueError: A mapping or resulting SSA reference is invalid.
+
+    Examples:
+        Redirect uses of a duplicate constant. The definitions remain in place;
+        use [`erase_ops`][niro.rewrite.erase_ops] to remove the unused one later:
+
+        ```python
+        from niro import ir, rewrite
+
+        a, b, result = (
+            ir.Value(ir.ValueId(i), ir.ScalarType.I32) for i in range(3)
+        )
+        add = ir.Add(result, b, b)
+        block = ir.Block(operations=[
+            ir.Const(a, 5), ir.Const(b, 5), add, ir.Return((result,))
+        ])
+        function = ir.Function(
+            "sum", ir.FunctionType((), (result.type,)), ir.Region([block])
+        )
+        updated = rewrite.replace_uses(function, {b.id: a})
+        assert updated.first_block is not None
+        assert updated.first_block.operations[2] == ir.Add(result, a, a)
+        assert block.operations[2] is add
+
+        # Alternatively, replace only the left operand of this addition.
+        selected = rewrite.replace_uses(
+            function, {b.id: a},
+            where=lambda use: use.owner is add and use.operand_index == 0,
+        )
+        assert selected.first_block is not None
+        assert selected.first_block.operations[2] == ir.Add(result, a, b)
+        ```
     """
     _check_mapping(function, mapping)
     if function.body is None or not mapping:
@@ -240,6 +366,32 @@ def replace_ops(
     Raises:
         ValueError: Targets overlap or are absent, an insertion point is invalid,
             or the result has duplicate definitions or invalid value references.
+
+    Examples:
+        Fold two constants and their addition into one constant. Preserving the
+        result ID keeps the Return valid without a replacement value map:
+
+        ```python
+        from niro import ir, rewrite
+
+        a, b, result = (
+            ir.Value(ir.ValueId(i), ir.ScalarType.I32) for i in range(3)
+        )
+        left, right = ir.Const(a, 2), ir.Const(b, 3)
+        add = ir.Add(result, a, b)
+        block = ir.Block(operations=[left, right, add, ir.Return((result,))])
+        function = ir.Function(
+            "five", ir.FunctionType((), (result.type,)), ir.Region([block])
+        )
+        folded = ir.Const(result, 5)
+        updated = rewrite.replace_ops(
+            function, (left, right, add), (folded,),
+            at=rewrite.InsertPoint(block, 0),
+        )
+        assert updated.first_block is not None
+        assert updated.first_block.operations == [folded, ir.Return((result,))]
+        assert len(block.operations) == 4
+        ```
     """
     mapping = {} if replacements is None else replacements
     _check_mapping(function, mapping)
@@ -301,7 +453,29 @@ def replace_ops(
 
 
 def insert_ops(function: Function, ops: Sequence[Op], *, at: InsertPoint) -> Function:
-    """Insert operations at an input gap; see [`replace_ops`][niro.rewrite.replace_ops]."""
+    """Insert operations at an input gap; see [`replace_ops`][niro.rewrite.replace_ops].
+
+    Examples:
+        Insert a constant before the Return. Insertion alone does not change
+        existing operands, so the new result is initially unused:
+
+        ```python
+        from niro import ir, rewrite
+
+        block = ir.Block(operations=[ir.Return()])
+        function = ir.Function("empty", ir.FunctionType((), ()), ir.Region([block]))
+        result, supply = rewrite.fresh_value(
+            rewrite.value_supply(function), ir.ScalarType.I32
+        )
+        constant = ir.Const(result, 42)
+        updated = rewrite.insert_ops(
+            function, (constant,), at=rewrite.InsertPoint(block, 0)
+        )
+        assert updated.first_block is not None
+        assert updated.first_block.operations == [constant, ir.Return()]
+        assert block.operations == [ir.Return()]
+        ```
+    """
     return replace_ops(function, (), ops, at=at)
 
 
@@ -310,6 +484,24 @@ def erase_ops(function: Function, ops: Sequence[Op]) -> Function:
 
     Uses inside the erased subgraph are allowed. The caller must establish that
     discarding the operations' effects is legal.
+
+    Examples:
+        Remove an unused calculation together with its constant. The addition
+        uses the constant, but both disappear in the same edit:
+
+        ```python
+        from niro import ir, rewrite
+
+        a = ir.Value(ir.ValueId(0), ir.ScalarType.I32)
+        b = ir.Value(ir.ValueId(1), ir.ScalarType.I32)
+        constant, add = ir.Const(a, 3), ir.Add(b, a, a)
+        block = ir.Block(operations=[constant, add, ir.Return()])
+        function = ir.Function("empty", ir.FunctionType((), ()), ir.Region([block]))
+        updated = rewrite.erase_ops(function, (constant, add))
+        assert updated.first_block is not None
+        assert updated.first_block.operations == [ir.Return()]
+        assert len(block.operations) == 3
+        ```
     """
     return replace_ops(function, ops, ())
 
@@ -320,6 +512,30 @@ def move_ops(function: Function, ops: Sequence[Op], *, to: InsertPoint) -> Funct
     The destination is a gap in the input version and cannot be inside any
     moved operation. The caller must establish dominance, scope, and effect
     ordering at the destination.
+
+    Examples:
+        Reorder two independent constants, keeping both before their consumer.
+        Index 2 denotes the gap before Add in the original block:
+
+        ```python
+        from niro import ir, rewrite
+
+        a, b, result = (
+            ir.Value(ir.ValueId(i), ir.ScalarType.I32) for i in range(3)
+        )
+        first, second = ir.Const(a, 2), ir.Const(b, 3)
+        add, ret = ir.Add(result, a, b), ir.Return((result,))
+        block = ir.Block(operations=[first, second, add, ret])
+        function = ir.Function(
+            "sum", ir.FunctionType((), (result.type,)), ir.Region([block])
+        )
+        updated = rewrite.move_ops(
+            function, (first,), to=rewrite.InsertPoint(block, 2)
+        )
+        assert updated.first_block is not None
+        assert updated.first_block.operations == [second, first, add, ret]
+        assert block.operations == [first, second, add, ret]
+        ```
     """
     return replace_ops(function, ops, ops, at=to)
 
@@ -347,6 +563,36 @@ def clone_region(
     Raises:
         ValueError: Definitions repeat, a capture key names a region definition, types
             differ, or allocated IDs collide with captured values.
+
+    Examples:
+        Copy a branch that captures x, replacing that capture with a destination
+        function's argument. Local definitions get fresh IDs; Yield is remapped:
+
+        ```python
+        from niro import ir, rewrite
+
+        x = ir.Value(ir.ValueId(0), ir.ScalarType.I32)
+        local = ir.Value(ir.ValueId(1), ir.ScalarType.I32)
+        branch = ir.Region([ir.Block(operations=[
+            ir.Add(local, x, x), ir.Yield((local,))
+        ])])
+        argument = ir.Value(ir.ValueId(10), ir.ScalarType.I32)
+        destination = ir.Function(
+            "destination", ir.FunctionType((argument.type,), ()),
+            ir.Region([ir.Block((argument,), [ir.Return()])]),
+        )
+        copied, values, supply = rewrite.clone_region(
+            branch, rewrite.value_supply(destination), captures={x.id: argument}
+        )
+        fresh_local = values[local.id]
+        assert fresh_local.id == 11
+        assert copied.blocks[0].operations == [
+            ir.Add(fresh_local, argument, argument), ir.Yield((fresh_local,))
+        ]
+        assert x.id not in values  # The returned map contains definitions only.
+        assert supply.next_id == 12
+        assert branch.blocks[0].operations[0] == ir.Add(local, x, x)
+        ```
     """
     captures = {} if captures is None else captures
     definitions = _definitions(region)
