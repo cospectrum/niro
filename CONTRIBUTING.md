@@ -52,7 +52,8 @@ does so before returning.
 - Name pass modules by subject or transformation and pass functions by action.
 - Prefer guard clauses and early returns over nesting.
 - Place public functions and methods before private helpers where possible,
-  keeping private helpers near the bottom of their module or class.
+  keeping private helpers near the bottom of their module or class. Likewise,
+  place tests near the top and test helpers near the bottom where possible.
 - Every function and type defined under `src/` must have a docstring, including
   private helpers, methods, classes, and type aliases. For functions, explain
   what they do and return, and any non-obvious assumptions or side effects.
