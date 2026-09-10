@@ -19,12 +19,12 @@ Test meaningful behavior and invariants. Unit tests mirror `src/` under
 
 ## Code
 
-- Keep designs small and direct without sacrificing correctness or output
-  quality. Model semantics precisely; keep core IR independent of frontends
-  and backends.
-- Keep Niro IR high-level and functionalized: tensor updates produce new SSA
-  values. Defer memory writes, bufferization, and in-place operations to later
-  lowering passes, such as MLIR passes.
+- Keep designs small, clear, and correct. Avoid premature optimization;
+  optimize measured bottlenecks later.
+- Model Niro IR semantics precisely and independently of frontends and backends.
+  Keep it high-level and functionalized: tensor updates produce new SSA values.
+  Defer memory writes, bufferization, and in-place operations to later lowering
+  passes, such as MLIR passes.
 - Prefer functions, immutable dataclasses, and transformations returning new IR.
   Use behavior-owning classes only for shared mutable state (builders, value
   allocators) or resource lifecycles; avoid inheritance and classes that merely
