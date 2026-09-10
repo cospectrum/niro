@@ -16,6 +16,90 @@ def test_empty_module_can_be_verified_repeatedly() -> None:
     assert module.globals == []
 
 
+@pytest.mark.parametrize(
+    ("type_", "initializer"),
+    [
+        (ir.ScalarType.BOOL, True),
+        (ir.ScalarType.I32, -1),
+        (ir.ScalarType.I64, 42),
+        (ir.ScalarType.F32, 1.5),
+        (ir.ScalarType.F64, 2.5),
+        (ir.TensorType(ir.ScalarType.F32, (2, 3)), bytes(24)),
+        (ir.TensorType(ir.ScalarType.I64, ()), bytes(8)),
+        (ir.TensorType(ir.ScalarType.BOOL, (2,)), bytes(2)),
+        (ir.TensorType(ir.ScalarType.I32, (0, 3)), b""),
+    ],
+)
+def test_valid_global_initializers(type_: ir.Type, initializer: ir.Literal) -> None:
+    global_ = ir.Global("weight", type_, initializer)
+    module = ir.Module(globals=[global_])
+
+    assert verify.module(module) is module
+    assert module.globals[0] is global_
+
+
+@pytest.mark.parametrize("used", [False, True])
+@pytest.mark.parametrize(
+    ("type_", "initializer", "error", "message"),
+    [
+        (ir.ScalarType.BOOL, 1, TypeError, "declared type"),
+        (ir.ScalarType.I32, True, TypeError, "declared type"),
+        (ir.ScalarType.I64, 1.5, TypeError, "declared type"),
+        (ir.ScalarType.F32, True, TypeError, "declared type"),
+        (ir.ScalarType.F64, b"", TypeError, "declared type"),
+        (
+            ir.TensorType(ir.ScalarType.F32, (2,)),
+            bytes(4),
+            ValueError,
+            "4 bytes, expected 8",
+        ),
+        (
+            ir.TensorType(ir.ScalarType.F32, (2,)),
+            bytes(12),
+            ValueError,
+            "12 bytes, expected 8",
+        ),
+        (ir.TensorType(ir.ScalarType.F32, (None,)), b"", TypeError, "static shape"),
+        (ir.TensorType(ir.ScalarType.F32, None), b"", TypeError, "static shape"),
+        (ir.TensorType(ir.ScalarType.F32, ()), 1.0, TypeError, "packed bytes"),
+    ],
+)
+def test_invalid_global_initializers(
+    type_: ir.Type,
+    initializer: ir.Literal,
+    error: type[Exception],
+    message: str,
+    used: bool,
+) -> None:
+    module = ir.Module(
+        globals=[
+            ir.Global("valid", ir.ScalarType.I32, 0),
+            ir.Global("weight", type_, initializer),
+        ]
+    )
+    if used:
+        result = ir.Value(ir.ValueId(0), type_)
+        module.functions.append(
+            ir.Function(
+                "main",
+                ir.FunctionType((), (type_,)),
+                ir.Region(
+                    [
+                        ir.Block(
+                            operations=[
+                                ir.GetGlobal("weight", result),
+                                ir.Return((result,)),
+                            ]
+                        )
+                    ]
+                ),
+            )
+        )
+
+    with pytest.raises(error, match=f"global 'weight' initializer.*{message}"):
+        verify.module(module)
+
+
 def test_declarations_need_no_body() -> None:
     declaration = ir.Function(
         name="external",

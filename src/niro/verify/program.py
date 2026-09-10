@@ -8,6 +8,7 @@ from typing import assert_never
 
 from niro import ir
 from niro.ir.program import Module, VerifiedModule
+from niro.verify.data import _verify_literal
 from niro.verify.ops import _verify_op
 
 __all__ = ["module"]
@@ -23,6 +24,12 @@ def module(module_: Module) -> VerifiedModule:
 
 def _verify_module(module_: ir.Module) -> None:
     _verify_symbol_names(module_)
+    for global_ in module_.globals:
+        _verify_literal(
+            global_.type,
+            global_.initializer,
+            context=f"global {global_.name!r} initializer",
+        )
     functions = {function.name: function for function in module_.functions}
     globals_ = {global_.name: global_ for global_ in module_.globals}
     for function in module_.functions:

@@ -126,6 +126,11 @@ A global is an immutable initialized module value:
 weight = Global(name="weight", type=weight_type, initializer=weight_data)
 ```
 
+The initializer must match the global's declared type, even if the global is
+unused. Tensor initializers require a static shape and exactly the number of
+packed bytes implied by the shape and element type, following the same literal
+rules as `Const`.
+
 ### `Function`
 
 A function has a name, signature, and optional body:
