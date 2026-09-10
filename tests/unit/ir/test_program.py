@@ -41,3 +41,15 @@ def test_optional_interface_names() -> None:
     assert function.input_names == ("value", None)
     assert function.output_names == (None,)
     assert verify.module(ir.Module(functions=[function])).functions == [function]
+
+
+def test_blocks_compare_and_hash_by_identity_through_mutation_and_cycles() -> None:
+    first, second = ir.Block(), ir.Block()
+    assert first != second
+    members = {first, second}
+    first.operations.append(ir.Branch(first))
+    second.operations.append(ir.Branch(second))
+    assert first != second
+    assert first in members and second in members
+    assert ir.Branch(first) == ir.Branch(first)
+    assert ir.Branch(first) != ir.Branch(second)

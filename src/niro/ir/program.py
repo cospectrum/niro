@@ -19,12 +19,13 @@ SymbolName = str
 """A module symbol name, required to be nonempty and unique by verification."""
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class Block:
     """An ordered sequence of operations with SSA arguments defined at entry.
 
-    A verified block ends with its region's terminator and defines values
-    before their uses, allowing captures from enclosing regions.
+    Blocks compare and hash by identity, regardless of their mutable contents.
+    A verified block ends with a branch or its region's exit terminator. Value
+    definitions dominate their uses, allowing captures from enclosing regions.
     """
 
     arguments: tuple[Value, ...] = ()
@@ -35,8 +36,10 @@ class Block:
 class Region:
     """A sequence of blocks owned by a function or operation.
 
-    Verification currently requires exactly one block; builders may hold
-    empty regions while constructing a program.
+    The first block is the entry and cannot be a branch target. Verification
+    requires nonempty regions with every block reachable from entry. Blocks
+    have unique ownership; branches stay within their immediately owning region.
+    Builders may hold empty regions while constructing a program.
     """
 
     blocks: list[Block] = field(default_factory=list)

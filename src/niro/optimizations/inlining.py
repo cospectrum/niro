@@ -22,9 +22,9 @@ def inline_functions(
     Clone the callee's body at each call site with fresh value IDs, substitute
     its parameters with the call arguments, and redirect uses of call results
     to the returned values. Preserve operation order and function definitions.
-    External declarations and all functions in direct or indirect call cycles
-    are excluded as callees. Calls to eligible helpers inside recursive
-    functions can still be inlined.
+    External declarations, multiblock function bodies, and all functions in
+    direct or indirect call cycles are excluded as callees. Calls to eligible
+    helpers inside recursive or multiblock functions can still be inlined.
 
     Selection applies to call targets throughout the module, including inside
     unselected callers. Calls to unselected functions remain calls when a
@@ -115,7 +115,8 @@ def inline_functions(
         assert body.operations == [ir.Add(fresh, x, x), ir.Return((fresh,))]
         assert optimized.functions[0] is helper
         assert optimizations.inline_functions(module, max_callee_ops=1) is module
-        assert optimizations.inline_functions(module, callees={"double"}) == optimized
+        selected = optimizations.inline_functions(module, callees={"double"})
+        assert selected.functions[1].first_block.operations == body.operations
         assert optimizations.inline_functions(module, callees={"caller"}) is module
         assert optimizations.inline_functions(module, callees=set()) is module
         ```
@@ -144,7 +145,7 @@ def inline_functions(
     for name in graphlib.TopologicalSorter(dependencies).static_order():
         function = _inline_calls(functions[name], eligible)
         functions[name] = function
-        if function.body is None or name in recursive:
+        if function.body is None or len(function.body.blocks) != 1 or name in recursive:
             continue
         if callees is not None and name not in callees:
             continue

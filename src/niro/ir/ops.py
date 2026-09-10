@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from niro.ir.data import Attributes, Literal
-from niro.ir.program import Region, SymbolName
+from niro.ir.program import Block, Region, SymbolName
 from niro.ir.values import Value
 
 
@@ -86,6 +86,35 @@ class Call:
 
 
 @dataclass(frozen=True, slots=True)
+class Branch:
+    """Jump to a block in the current region, passing its arguments.
+
+    The target is identified by object identity. Arguments match its block
+    arguments in number, order, and type. This terminator produces no results.
+    """
+
+    target: Block
+    arguments: tuple[Value, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class CondBranch:
+    """Select a successor using a scalar boolean condition.
+
+    Targets belong to the current region and are identified by object identity.
+    Each argument tuple matches its target's block arguments in number, order,
+    and type. Operand order is condition, true arguments, then false arguments.
+    This terminator produces no results.
+    """
+
+    condition: Value
+    true_target: Block
+    false_target: Block
+    true_arguments: tuple[Value, ...] = ()
+    false_arguments: tuple[Value, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class Return:
     """End a function body with values matching the function's output types."""
 
@@ -103,9 +132,9 @@ class Yield:
 class If:
     """Select one branch using a scalar boolean condition.
 
-    Each branch has one argument-free block ending in [`Yield`][niro.ir.Yield]
-    with the result types. Branches may capture values available before this
-    operation.
+    Each branch has an argument-free entry block and exits through
+    [`Yield`][niro.ir.Yield] with the result types. Branches may capture values
+    available before this operation.
     """
 
     results: tuple[Value, ...]
@@ -132,6 +161,8 @@ Op = (
     | Mul
     | MatMul
     | Call
+    | Branch
+    | CondBranch
     | Return
     | Yield
     | If

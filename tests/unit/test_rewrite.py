@@ -1,5 +1,5 @@
-import copy
 import dataclasses
+import pickle
 from collections.abc import Callable
 
 import pytest
@@ -121,7 +121,7 @@ def test_replace_op_decomposes_nested_operation_and_redirects_uses() -> None:
         ir.Region([ir.Block(operations=[ir.Yield((x,))])]),
     )
     original = function(ir.Block((x, condition), [branch, ir.Return((out,))]))
-    snapshot = copy.deepcopy(original)
+    snapshot = pickle.dumps(original)
     replacements = (ir.Const(factor, 2), ir.Mul(result, x, factor))
     updated = rewrite.replace_op(
         original, add, replacements, replacements={local.id: result}
@@ -132,7 +132,7 @@ def test_replace_op_decomposes_nested_operation_and_redirects_uses() -> None:
         *replacements,
         ir.Yield((result,)),
     ]
-    assert original == snapshot
+    assert pickle.dumps(original) == snapshot
     check(updated)
 
 
@@ -141,12 +141,12 @@ def test_replace_op_can_eliminate_an_operation_and_rejects_dangling_uses() -> No
     x, result = value(0, tensor), value(1, tensor)
     transpose = ir.Transpose(result, x, (0, 1))
     original = function(ir.Block((x,), [transpose, ir.Return((result,))]))
-    snapshot = copy.deepcopy(original)
+    snapshot = pickle.dumps(original)
     with pytest.raises(ValueError, match="dangling use"):
         rewrite.replace_op(original, transpose, ())
     updated = rewrite.replace_op(original, transpose, (), replacements={result.id: x})
     assert operations(updated) == [ir.Return((x,))]
-    assert original == snapshot
+    assert pickle.dumps(original) == snapshot
     check(updated)
 
 
@@ -154,14 +154,14 @@ def test_replace_uses_is_simultaneous_and_preserves_definitions_and_input() -> N
     a, b, c, result = (value(i) for i in range(4))
     add = ir.Add(result, a, b)
     original = function(ir.Block((a, b, c), [add, ir.Return((result,))]))
-    snapshot = copy.deepcopy(original)
+    snapshot = pickle.dumps(original)
 
     updated = rewrite.replace_uses(original, {a.id: b, b.id: c})
 
     assert operations(updated)[0] == ir.Add(result, b, c)
     assert updated.first_block is not None
     assert updated.first_block.arguments == (a, b, c)
-    assert original == snapshot
+    assert pickle.dumps(original) == snapshot
     assert updated.attributes == original.attributes
     check(updated)
 
@@ -389,7 +389,7 @@ def test_invalid_edits_leave_input_untouched() -> None:
     constant = ir.Const(y, 1)
     block = ir.Block((x,), [constant, ir.Return((y,))])
     original = function(block)
-    snapshot = copy.deepcopy(original)
+    snapshot = pickle.dumps(original)
     for mapping, message in [
         ({x.id: value(3, ir.ScalarType.F32)}, "types do not match"),
         ({value(99).id: y}, "not defined"),
@@ -411,7 +411,7 @@ def test_invalid_edits_leave_input_untouched() -> None:
             (ir.UnknownOp("use", (value(0, ir.ScalarType.F32),), ()),),
             at=rewrite.InsertPoint(block, 0),
         )
-    assert original == snapshot
+    assert pickle.dumps(original) == snapshot
 
 
 @pytest.mark.parametrize("index", [-1, 2])
@@ -445,7 +445,7 @@ def test_clone_freshens_arguments_results_and_nested_definitions() -> None:
         ir.Region([ir.Block(operations=[ir.Yield((b,))])]),
     )
     region = ir.Region([ir.Block((a, b), [branch, ir.Return((result,))])])
-    snapshot = copy.deepcopy(region)
+    snapshot = pickle.dumps(region)
     capture = value(50)
     supply = ir.ValueSupply(100)
     cloned, mapping = rewrite.clone_region(region, supply, captures={x.id: capture})
@@ -463,7 +463,7 @@ def test_clone_freshens_arguments_results_and_nested_definitions() -> None:
     ]
     assert copied.else_region.blocks[0].operations == [ir.Yield((mapping[b.id],))]
     assert cloned.blocks[0].operations[-1] == ir.Return((mapping[result.id],))
-    assert region == snapshot
+    assert pickle.dumps(region) == snapshot
     assert copied.then_region is not branch.then_region
 
 
@@ -647,3 +647,82 @@ def test_failed_clone_does_not_consume_ids() -> None:
     with pytest.raises(ValueError, match="collides"):
         rewrite.clone_region(region, supply)
     assert supply.next_id == 10
+
+
+@pytest.mark.parametrize("true_count", [0, 1, 2])
+def test_with_operands_preserves_branch_targets_and_argument_segments(
+    true_count: int,
+) -> None:
+    flag, other_flag = value(0, ir.ScalarType.BOOL), value(1, ir.ScalarType.BOOL)
+    x, y = value(2), value(3)
+    left, right = ir.Block(), ir.Block()
+    op = ir.CondBranch(flag, left, right, (x,) * true_count, (x,))
+    updated = rewrite.with_operands(op, (other_flag, *((y,) * (true_count + 1))))
+    assert updated == ir.CondBranch(other_flag, left, right, (y,) * true_count, (y,))
+    assert rewrite.with_operands(ir.Branch(left, (x,)), (y,)) == ir.Branch(left, (y,))
+
+
+@pytest.mark.parametrize("edit", ["clone", "map", "replace-uses", "replace-op"])
+def test_cfg_rewrites_remap_forward_edges_and_backedges_without_mutation(
+    edit: str,
+) -> None:
+    flag = value(0, ir.ScalarType.BOOL)
+    x, carried, total = value(1), value(2), value(3)
+    add = ir.Add(total, carried, x)
+    exit_ = ir.Block(operations=[ir.Return((total,))])
+    loop = ir.Block((carried,), [add])
+    loop.operations.append(ir.CondBranch(flag, loop, exit_, (total,), ()))
+    entry = ir.Block((flag, x), [ir.Branch(loop, (x,))])
+    body = ir.Region([entry, exit_, loop])
+    fn = ir.Function("f", ir.FunctionType((flag.type, x.type), (x.type,)), body)
+    check(fn)
+    snapshot = pickle.dumps(fn)
+    if edit == "clone":
+        copied, values = rewrite.clone_region(body, ir.ValueSupply(10))
+        updated = dataclasses.replace(fn, body=copied)
+        assert len(values) == 4
+        assert copied.blocks[0].arguments == (values[flag.id], values[x.id])
+        jump = copied.blocks[0].operations[-1]
+        assert isinstance(jump, ir.Branch)
+        assert jump.arguments == (values[x.id],)
+    elif edit == "map":
+        updated = dataclasses.replace(
+            fn, body=rewrite.map_blocks(body, lambda block: block)
+        )
+    elif edit == "replace-uses":
+        updated = rewrite.replace_uses(fn, {total.id: x})
+    else:
+        updated = rewrite.replace_op(fn, add, (ir.Mul(total, carried, x),))
+    check(updated)
+    assert updated.body is not None
+    new_entry, new_exit, new_loop = updated.body.blocks
+    assert all(
+        a is not b for a, b in zip(body.blocks, updated.body.blocks, strict=True)
+    )
+    assert ir.get_successors(new_entry.operations[-1]) == (new_loop,)
+    assert ir.get_successors(new_loop.operations[-1]) == (new_loop, new_exit)
+    assert pickle.dumps(fn) == snapshot
+
+
+def test_clone_remaps_nested_cfg_and_its_captures() -> None:
+    flag, local_flag = value(0, ir.ScalarType.BOOL), value(1, ir.ScalarType.BOOL)
+    target = ir.Block(operations=[ir.Yield()])
+    start = ir.Block(operations=[ir.CondBranch(local_flag, target, target)])
+    nested = ir.If(
+        (),
+        flag,
+        ir.Region([start, target]),
+        ir.Region([ir.Block(operations=[ir.Yield()])]),
+    )
+    body = ir.Region(
+        [ir.Block((flag,), [ir.Const(local_flag, True), nested, ir.Return()])]
+    )
+    copied, renamed = rewrite.clone_region(body, ir.ValueSupply(10))
+    cloned = copied.blocks[0].operations[1]
+    assert isinstance(cloned, ir.If)
+    branch = cloned.then_region.blocks[0].operations[0]
+    assert isinstance(branch, ir.CondBranch)
+    assert branch.condition == renamed[local_flag.id]
+    assert ir.get_successors(branch) == (cloned.then_region.blocks[1],) * 2
+    fn = ir.Function("f", ir.FunctionType((flag.type,), ()), copied)
+    check(fn)

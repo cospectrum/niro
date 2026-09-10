@@ -1,6 +1,6 @@
-import copy
 import dataclasses
 import itertools
+import pickle
 from collections.abc import Sequence
 
 import pytest
@@ -69,12 +69,12 @@ def test_removes_identity_for_known_rank_including_dynamic_dimensions(
 ) -> None:
     function = chain(shape, (tuple(range(len(shape))),))
     original = verify.module(ir.Module(functions=[function]))
-    snapshot = copy.deepcopy(original)
+    snapshot = pickle.dumps(original)
     updated = optimizations.simplify_transposes(original)
     assert block(updated.functions[0]).operations == [
         ir.Return(block(function).arguments)
     ]
-    assert original == snapshot
+    assert pickle.dumps(original) == snapshot
     assert optimizations.simplify_transposes(updated) is updated
 
 
@@ -213,7 +213,7 @@ def test_composes_captures_in_both_if_regions_and_removes_unused_producer() -> N
         ir.Region([ir.Block((x, condition), [producer, branch, ir.Return((result,))])]),
     )
     original = verify.module(ir.Module(functions=[function]))
-    snapshot = copy.deepcopy(original)
+    snapshot = pickle.dumps(original)
     updated = optimizations.simplify_transposes(original)
     operations = block(updated.functions[0]).operations
     assert len(operations) == 2
@@ -221,7 +221,7 @@ def test_composes_captures_in_both_if_regions_and_removes_unused_producer() -> N
     assert isinstance(updated_branch, ir.If)
     assert updated_branch.then_region.blocks[0].operations == [ir.Yield((x,))]
     assert updated_branch.else_region.blocks[0].operations == [ir.Yield((x,))]
-    assert original == snapshot
+    assert pickle.dumps(original) == snapshot
 
 
 def test_identity_redirects_repeated_operands_and_nested_captures() -> None:
@@ -315,7 +315,7 @@ def test_module_preserves_metadata_globals_and_unchanged_functions() -> None:
             attributes={"tag": "module"},
         )
     )
-    snapshot = copy.deepcopy(original)
+    snapshot = pickle.dumps(original)
     updated = optimizations.simplify_transposes(original)
     for index in (0, 2):
         assert block(updated.functions[index]).operations == [
@@ -328,9 +328,35 @@ def test_module_preserves_metadata_globals_and_unchanged_functions() -> None:
     assert updated.functions[0].attributes == first.attributes
     assert updated.attributes == original.attributes
     assert updated.globals[0] is global_
-    assert original == snapshot
+    assert pickle.dumps(original) == snapshot
 
 
 def test_empty_module_is_unchanged() -> None:
     original = verify.module(ir.Module())
     assert optimizations.simplify_transposes(original) is original
+
+
+def test_simplifies_transposes_across_blocks_and_in_branch_arguments() -> None:
+    tensor = ir.TensorType(ir.ScalarType.F32, (2, 3))
+    swapped = ir.TensorType(ir.ScalarType.F32, (3, 2))
+    x, first, second, returned = (
+        ir.Value(ir.ValueId(i), type_)
+        for i, type_ in enumerate((tensor, swapped, tensor, tensor))
+    )
+    exit_ = ir.Block((returned,), [ir.Return((returned,))])
+    middle = ir.Block(
+        operations=[ir.Transpose(second, first, (1, 0)), ir.Branch(exit_, (second,))]
+    )
+    entry = ir.Block((x,), [ir.Transpose(first, x, (1, 0)), ir.Branch(middle)])
+    fn = ir.Function(
+        "f", ir.FunctionType((tensor,), (tensor,)), ir.Region([entry, middle, exit_])
+    )
+    original = verify.module(ir.Module(functions=[fn]))
+    snapshot = pickle.dumps(original)
+    updated = optimizations.simplify_transposes(original)
+    body = updated.functions[0].body
+    assert body is not None
+    assert not any(isinstance(op, ir.Transpose) for op in ir.iter_ops(body))
+    assert body.blocks[1].operations == [ir.Branch(body.blocks[2], (x,))]
+    assert pickle.dumps(original) == snapshot
+    assert optimizations.simplify_transposes(updated) is updated

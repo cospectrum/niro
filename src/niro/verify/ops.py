@@ -31,10 +31,13 @@ def _verify_op(op: Op) -> None:
         case ir.If():
             if op.condition.type is not ir.ScalarType.BOOL:
                 raise TypeError("if condition must be boolean")
+        case ir.CondBranch():
+            if op.condition.type is not ir.ScalarType.BOOL:
+                raise TypeError("conditional branch condition must be boolean")
         case ir.UnknownOp():
             if not op.name:
                 raise ValueError("UnknownOp name cannot be empty")
-        case ir.Call() | ir.GetGlobal() | ir.Return() | ir.Yield():
+        case ir.Call() | ir.GetGlobal() | ir.Return() | ir.Yield() | ir.Branch():
             pass
         case _ as unreachable:
             assert_never(unreachable)

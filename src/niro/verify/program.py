@@ -26,6 +26,7 @@ def module(module_: Module) -> VerifiedModule:
 def _verify_module(module_: ir.Module) -> None:
     """Validate module symbols, global literals, and every function definition."""
     _verify_symbol_names(module_)
+    _verify_ownership(module_)
     for global_ in module_.globals:
         _verify_literal(
             global_.type,
@@ -36,6 +37,24 @@ def _verify_module(module_: ir.Module) -> None:
     globals_ = {global_.name: global_ for global_ in module_.globals}
     for function in module_.functions:
         _verify_function(function, functions, globals_)
+
+
+def _verify_ownership(module: ir.Module) -> None:
+    """Reject shared or cyclic region/block ownership before recursive traversal."""
+    regions: set[int] = set()
+    blocks: set[ir.Block] = set()
+    pending = [f.body for f in module.functions if f.body is not None]
+    while pending:
+        region = pending.pop()
+        if id(region) in regions:
+            raise ValueError("region must have a unique owner")
+        regions.add(id(region))
+        for block in region.blocks:
+            if block in blocks:
+                raise ValueError("block must have a unique owner")
+            blocks.add(block)
+            for op in block.operations:
+                pending.extend(ir.get_regions(op))
 
 
 def _verify_symbol_names(module: ir.Module) -> None:
@@ -100,22 +119,100 @@ def _verify_region(
     functions: Mapping[ir.SymbolName, ir.Function],
     globals_: Mapping[ir.SymbolName, ir.Global],
 ) -> None:
-    """Require a single block with the expected inputs and validate its contents."""
+    """Validate entry inputs, CFG edges, dominance, and each block's contents."""
     if not region.blocks:
         raise ValueError("region must contain a block")
-    if len(region.blocks) != 1:
-        raise ValueError("multiple blocks per region are not supported yet")
     if tuple(value.type for value in region.blocks[0].arguments) != input_types:
         raise TypeError("region argument types do not match expected input types")
+    dominators = _verify_cfg(region, terminator)
+    definitions = {
+        block: {
+            value.id: value.type
+            for value in (
+                *block.arguments,
+                *(v for op in block.operations for v in ir.get_results(op)),
+            )
+        }
+        for block in region.blocks
+    }
     for block in region.blocks:
+        scope = dict(outer_scope)
+        for dominator in dominators[block] - {block}:
+            scope.update(definitions[dominator])
         _verify_block(
             block,
-            outer_scope,
+            scope,
             output_types,
             terminator,
             functions=functions,
             globals_=globals_,
         )
+
+
+def _verify_cfg(
+    region: ir.Region, terminator: type[Terminator]
+) -> dict[ir.Block, set[ir.Block]]:
+    """Validate a nonempty region's edges and return its block dominator sets.
+
+    Require reachable blocks and no edges to entry. Loops need not have an exit.
+    Compute dominance by fixed-point predecessor intersection, independent of
+    the order of non-entry blocks.
+    """
+    entry = region.blocks[0]
+    predecessors: dict[ir.Block, set[ir.Block]] = {b: set() for b in region.blocks}
+    for block in region.blocks:
+        if not block.operations or not isinstance(
+            block.operations[-1], (terminator, ir.Branch, ir.CondBranch)
+        ):
+            raise ValueError(f"block must end with {terminator.__name__} or a branch")
+        if any(
+            isinstance(op, (ir.Return, ir.Yield, ir.Branch, ir.CondBranch))
+            for op in block.operations[:-1]
+        ):
+            raise ValueError("unexpected block terminator")
+        op = block.operations[-1]
+        edges: tuple[tuple[ir.Block, tuple[ir.Value, ...]], ...] = ()
+        if isinstance(op, ir.Branch):
+            edges = ((op.target, op.arguments),)
+        elif isinstance(op, ir.CondBranch):
+            edges = (
+                (op.true_target, op.true_arguments),
+                (op.false_target, op.false_arguments),
+            )
+        for target, arguments in edges:
+            if target not in predecessors:
+                raise ValueError("branch target is outside the current region")
+            if target is entry:
+                raise ValueError("branches cannot target the region entry block")
+            if tuple(v.type for v in arguments) != tuple(
+                v.type for v in target.arguments
+            ):
+                raise TypeError("branch argument types do not match target block")
+            predecessors[target].add(block)
+
+    reachable: set[ir.Block] = set()
+    pending = [entry]
+    while pending:
+        block = pending.pop()
+        if block in reachable:
+            continue
+        reachable.add(block)
+        pending.extend(ir.get_successors(block.operations[-1]))
+    if len(reachable) != len(region.blocks):
+        raise ValueError("region contains unreachable blocks")
+
+    dominators = {block: set(reachable) for block in region.blocks}
+    dominators[entry] = {entry}
+    changed = True
+    while changed:
+        changed = False
+        for block in region.blocks[1:]:
+            common = set.intersection(*(dominators[p] for p in predecessors[block]))
+            updated = {block} | common
+            if updated != dominators[block]:
+                dominators[block] = updated
+                changed = True
+    return dominators
 
 
 def _verify_block(
@@ -133,9 +230,6 @@ def _verify_block(
     operation has been checked.
     """
     scope = {**outer_scope, **{value.id: value.type for value in block.arguments}}
-    if not block.operations or not isinstance(block.operations[-1], terminator):
-        raise ValueError(f"region must end with {terminator.__name__}")
-
     for index, op in enumerate(block.operations):
         for operand in ir.get_operands(op):
             if operand.id not in scope:
@@ -145,6 +239,8 @@ def _verify_block(
 
         _verify_op(op)
         match op:
+            case ir.Branch() | ir.CondBranch():
+                pass  # Placement and target signatures were checked with the CFG.
             case ir.Return() | ir.Yield():
                 if index != len(block.operations) - 1 or not isinstance(op, terminator):
                     raise ValueError("unexpected block terminator")

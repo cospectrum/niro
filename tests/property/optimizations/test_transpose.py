@@ -1,7 +1,7 @@
 """Properties of transpose simplification on generated tensor graphs."""
 
-import copy
 import itertools
+import pickle
 
 import hypothesis
 from hypothesis import strategies as st
@@ -125,7 +125,7 @@ def evaluate(
 
 @hypothesis.given(modules())
 def test_simplify_transposes_preserves_semantics(module: ir.VerifiedModule) -> None:
-    snapshot = copy.deepcopy(module)
+    snapshot = pickle.dumps(module)
     updated = optimizations.simplify_transposes(module)
     verify.module(updated)
     hypothesis.event(f"rewritten={updated is not module}")
@@ -134,7 +134,7 @@ def test_simplify_transposes_preserves_semantics(module: ir.VerifiedModule) -> N
             module.functions[0], condition
         )
     assert updated.functions[0].type == module.functions[0].type
-    assert module == snapshot
+    assert pickle.dumps(module) == snapshot
     assert optimizations.simplify_transposes(updated) is updated
     body = updated.functions[0].body
     assert body is not None
@@ -147,11 +147,11 @@ def test_simplify_transposes_preserves_semantics(module: ir.VerifiedModule) -> N
 
 @hypothesis.given(mixed_modules())
 def test_simplify_transposes_preserves_validity(module: ir.VerifiedModule) -> None:
-    snapshot = copy.deepcopy(module)
+    snapshot = pickle.dumps(module)
     updated = optimizations.simplify_transposes(module)
     verify.module(updated)
     hypothesis.event(f"rewritten={updated is not module}")
-    assert module == snapshot
+    assert pickle.dumps(module) == snapshot
     assert updated.globals == module.globals
     assert updated.attributes == module.attributes
     assert [(f.name, f.type, f.attributes) for f in updated.functions] == [

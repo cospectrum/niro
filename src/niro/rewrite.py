@@ -238,8 +238,16 @@ def with_operands(op: Op, operands: Sequence[Value]) -> Op:
             return dataclasses.replace(op, operand=operands[0])
         case ir.Add() | ir.Mul() | ir.MatMul():
             return dataclasses.replace(op, lhs=operands[0], rhs=operands[1])
-        case ir.Call():
+        case ir.Call() | ir.Branch():
             return dataclasses.replace(op, arguments=operands)
+        case ir.CondBranch():
+            split = 1 + len(op.true_arguments)
+            return dataclasses.replace(
+                op,
+                condition=operands[0],
+                true_arguments=operands[1:split],
+                false_arguments=operands[split:],
+            )
         case ir.Return() | ir.Yield() | ir.UnknownOp():
             return dataclasses.replace(op, operands=operands)
         case ir.If():
@@ -306,6 +314,8 @@ def map_regions(op: Op, transform: Callable[[Region], Region]) -> Op:
             | ir.Mul()
             | ir.MatMul()
             | ir.Call()
+            | ir.Branch()
+            | ir.CondBranch()
             | ir.Return()
             | ir.Yield()
             | ir.UnknownOp()
@@ -316,9 +326,13 @@ def map_regions(op: Op, transform: Callable[[Region], Region]) -> Op:
 
 
 def map_blocks(region: Region, transform: Callable[[Block], Block]) -> Region:
-    """Transform immediate blocks in order; recursion is explicit.
+    """Transform immediate blocks in order and remap branch destinations.
 
-    The callback must not mutate its input. No SSA verification is performed.
+    Recursion is explicit. The callback must not mutate its input. Branches may
+    reference input blocks or their replacements. When edges exist, allocate
+    fresh containers before wiring them, including cycles. Targets outside the
+    mapping are preserved. Block replacements must be distinct and unambiguous.
+    No SSA verification is performed.
 
     Examples:
         Complete an unfinished function body with a Return terminator:
@@ -346,9 +360,38 @@ def map_blocks(region: Region, transform: Callable[[Block], Block]) -> Region:
         assert body.blocks[0].operations == [constant]
         ```
     """
-    return dataclasses.replace(
-        region, blocks=[transform(block) for block in region.blocks]
-    )
+    transformed = [transform(block) for block in region.blocks]
+    if not any(
+        ir.get_successors(op) for block in transformed for op in block.operations
+    ):
+        return dataclasses.replace(region, blocks=transformed)
+    blocks = [ir.Block(arguments=block.arguments) for block in transformed]
+    targets: dict[ir.Block, ir.Block] = {}
+    for original, replacement, target in zip(
+        region.blocks, transformed, blocks, strict=True
+    ):
+        for source in (original, replacement):
+            if source in targets and targets[source] is not target:
+                raise ValueError("ambiguous block replacement")
+            targets[source] = target
+    for source, target in zip(transformed, blocks, strict=True):
+        target.operations = [_remap_successors(op, targets) for op in source.operations]
+    return dataclasses.replace(region, blocks=blocks)
+
+
+def _remap_successors(op: ir.Op, targets: Mapping[ir.Block, ir.Block]) -> ir.Op:
+    """Copy a branch with mapped targets, preserving unmapped destinations."""
+    match op:
+        case ir.Branch():
+            return dataclasses.replace(op, target=targets.get(op.target, op.target))
+        case ir.CondBranch():
+            return dataclasses.replace(
+                op,
+                true_target=targets.get(op.true_target, op.true_target),
+                false_target=targets.get(op.false_target, op.false_target),
+            )
+        case _:
+            return op
 
 
 def replace_uses(
@@ -510,8 +553,9 @@ def replace_ops(
     Resolve every target against the input function by identity. Targets may
     be nonadjacent or in different blocks, but cannot include both an operation
     and one of its descendants. Removing an operation also removes its regions.
-    The insertion block must survive. New operations are inserted verbatim,
-    then simultaneous substitutions apply to all surviving and inserted uses.
+    The insertion block must survive. New operations are inserted, branch
+    destinations are remapped to copied blocks, then simultaneous substitutions
+    apply to all surviving and inserted uses.
 
     Args:
         function: Input function.
@@ -741,6 +785,8 @@ def clone_region(
 ) -> tuple[Region, dict[ValueId, Value]]:
     """Copy a region with fresh IDs for every definition, including nested ones.
 
+    Remap internal branch destinations to copied blocks, including backedges.
+
     Args:
         region: Fragment to copy. Its definition IDs must be unique.
         supply: Fresh IDs from the destination function. Must not collide with
@@ -862,7 +908,7 @@ def _with_results(op: ir.Op, results: tuple[ir.Value, ...]) -> ir.Op:
             return dataclasses.replace(op, result=results[0])
         case ir.Call() | ir.If() | ir.UnknownOp():
             return dataclasses.replace(op, results=results)
-        case ir.Return() | ir.Yield():
+        case ir.Return() | ir.Yield() | ir.Branch() | ir.CondBranch():
             return op
         case _ as unreachable:
             assert_never(unreachable)

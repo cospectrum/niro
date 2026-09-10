@@ -111,7 +111,9 @@ def test_lowers_if_and_yield() -> None:
                             results=(result,),
                             condition=condition,
                             then_region=branch,
-                            else_region=branch,
+                            else_region=ir.Region(
+                                [ir.Block(operations=[ir.Yield((condition,))])]
+                            ),
                         ),
                         ir.Return(operands=(result,)),
                     ],
@@ -184,3 +186,34 @@ def test_rejects_dynamic_matmul() -> None:
         match="matmul requires a static ranked tensor",
     ):
         niro.to_mlir(module.verify())
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_branch_lowering_is_explicitly_unsupported(nested: bool) -> None:
+    flag = ir.Value(ir.ValueId(0), ir.ScalarType.BOOL)
+    loop = ir.Block()
+    loop.operations = [ir.CondBranch(flag, loop, loop)]
+    body = ir.Region([ir.Block(operations=[ir.Branch(loop)]), loop])
+    if nested:
+        body = ir.Region(
+            [
+                ir.Block(
+                    (flag,),
+                    [
+                        ir.If(
+                            (),
+                            flag,
+                            body,
+                            ir.Region([ir.Block(operations=[ir.Yield()])]),
+                        ),
+                        ir.Return(),
+                    ],
+                )
+            ]
+        )
+    else:
+        body.blocks[0].arguments = (flag,)
+    fn = ir.Function("f", ir.FunctionType((flag.type,), ()), body)
+    module = verify.module(ir.Module(functions=[fn]))
+    with pytest.raises(NotImplementedError, match="control-flow branches"):
+        niro.to_mlir(module)

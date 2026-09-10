@@ -180,8 +180,11 @@ A function body is a region. Some operations, such as `If`, also own nested
 regions. A nested region may use values visible at the containing operation.
 Values created inside it can leave only through results of that operation.
 
-Niro currently requires a single block in regions used for structured control
-flow. General multi-block control flow may be supported later.
+A region has one or more blocks. Its first block is the entry; every other
+block must be reachable from it through branches. Branches stay in their
+immediately containing region and cannot target its entry block. Blocks and
+regions each have a unique owner. Loops are allowed, including loops with no
+exit. Block order after entry does not determine execution order.
 
 ### `Block`
 
@@ -205,6 +208,11 @@ tuple(
 An external function has no body and therefore no entry block or block
 arguments. All blocks in a function share its value-ID namespace.
 
+Other blocks receive their arguments from incoming branches. Each block ends
+with `Branch`, `CondBranch`, or the exit terminator required by its region:
+`Return` for function bodies and `Yield` for `If` regions. A terminator must
+be the last operation in its block.
+
 ### `Op`
 
 `Op` is the closed union of operation kinds that may appear in a block:
@@ -218,6 +226,8 @@ type Op = (
     | Mul
     | MatMul
     | Call
+    | Branch
+    | CondBranch
     | Return
     | Yield
     | If
@@ -271,8 +281,8 @@ linkage, visibility, target options, and debug information.
 
 ## Operations
 
-Niro has a fixed set of known operation kinds. Adding an operation also requires
-supporting its validity rules and lowering behavior.
+Niro has a fixed set of known operation kinds. Backends must implement their
+semantics or reject unsupported operations explicitly.
 
 ### `Const`
 
@@ -343,6 +353,30 @@ function_call = Call(
 A call may have any number of arguments and results, including zero. The callee
 may be a definition or external declaration in the same module.
 
+### `Branch` and `CondBranch`
+
+`Branch` transfers control to a destination block, passing values to its block
+arguments. `CondBranch` selects its true or false destination using a scalar
+`BOOL` condition and passes the corresponding argument tuple. Both terminate
+their block and produce no results.
+
+```python
+merged = Value(ValueId(3), ScalarType.I32)
+join = Block(arguments=(merged,), operations=[Return((merged,))])
+left = Block(operations=[Branch(target=join, arguments=(lhs,))])
+right = Block(operations=[Branch(target=join, arguments=(rhs,))])
+entry = Block(
+    arguments=(condition, lhs, rhs),
+    operations=[CondBranch(condition, true_target=left, false_target=right)],
+)
+body = Region(blocks=[entry, left, right, join])
+```
+
+Each edge's arguments must match its destination's block arguments in number,
+order, and type. Both conditional edges may target the same block with different
+arguments. Block arguments express merged and loop-carried values without a
+separate phi operation.
+
 ### `Return`
 
 `Return` terminates a function and returns zero or more values:
@@ -364,8 +398,9 @@ yield_op = Yield(operands=(result,))
 
 ### `If`
 
-`If` selects one of two single-block regions using a boolean condition. Both
-regions end with `Yield`, and those yielded values become the `If` results:
+`If` selects one of two regions using a boolean condition. Each region has an
+argument-free entry block and may contain branches. Its exits use `Yield`, and
+those yielded values become the `If` results:
 
 ```python
 if_op = If(
@@ -432,8 +467,16 @@ A Niro module has unique symbol names across globals and functions. Within each
 function, value IDs are unique, operands refer to visible definitions, and uses
 obey SSA dominance.
 
+A block dominates another block when every path from region entry to the latter
+passes through the former. A value may be used in blocks dominated by its
+defining block. Within its defining block, an operation result is available
+only after that operation; block arguments are available from the start.
+Nested regions may capture only values available before their owning operation.
+Values defined on just one arm of a conditional cannot be used directly at a
+join; pass them through the join's block arguments instead.
+
 Tensor dimensions are non-negative. Function inputs and returns match their
 signatures. Operation operands and results have compatible types and shapes,
-and calls name functions with matching signatures. Every region ends with the
-terminator required by its containing operation, and values defined inside a
-region are not visible outside it.
+and calls name functions with matching signatures. Every block has a valid
+terminator, each region exit matches its containing operation, and values
+defined inside a region are not visible outside it.

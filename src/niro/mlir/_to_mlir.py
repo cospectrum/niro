@@ -21,7 +21,18 @@ ValueTable = dict[ir.ValueId, SSAValue]
 
 
 def to_mlir(niro_module: VerifiedModule) -> builtin.ModuleOp:
-    """Convert verified Niro IR to a verified, high-level MLIR module."""
+    """Convert verified Niro IR to a verified, high-level MLIR module.
+
+    Raise NotImplementedError for control-flow branches or unknown operations.
+    """
+    for function in niro_module.functions:
+        if function.body is not None and any(
+            isinstance(op, (ir.Branch, ir.CondBranch))
+            for op in ir.iter_ops(function.body)
+        ):
+            raise NotImplementedError(
+                "control-flow branches cannot be lowered to MLIR yet"
+            )
     lowered_functions = [
         _lower_function(function) for function in niro_module.functions
     ]

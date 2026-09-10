@@ -17,7 +17,9 @@ def test_ir_exports_operations() -> None:
 
     _ = (
         ir.Add,
+        ir.Branch,
         ir.Call,
+        ir.CondBranch,
         ir.Const,
         ir.If,
         ir.MatMul,

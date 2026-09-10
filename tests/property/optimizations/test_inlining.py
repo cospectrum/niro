@@ -1,6 +1,6 @@
 """Properties of inlining on generated acyclic scalar programs."""
 
-import copy
+import pickle
 from collections.abc import Sequence
 
 import hypothesis
@@ -170,7 +170,7 @@ def test_inline_functions_preserves_semantics(
     ]
     hypothesis.event(f"has_calls={any(isinstance(op, ir.Call) for op in operations)}")
     hypothesis.event(f"has_branches={any(isinstance(op, ir.If) for op in operations)}")
-    snapshot = copy.deepcopy(module)
+    snapshot = pickle.dumps(module)
     updated = optimizations.inline_functions(
         module, callees=callees, max_callee_ops=limit
     )
@@ -185,7 +185,7 @@ def test_inline_functions_preserves_semantics(
             assert evaluate(updated, function.name, args) == evaluate(
                 module, function.name, args
             )
-    assert module == snapshot
+    assert pickle.dumps(module) == snapshot
     assert (
         optimizations.inline_functions(updated, callees=callees, max_callee_ops=limit)
         is updated
@@ -208,13 +208,13 @@ def test_inline_functions_preserves_validity(
     case: tuple[ir.VerifiedModule, frozenset[ir.SymbolName] | None], limit: int | None
 ) -> None:
     module, callees = case
-    snapshot = copy.deepcopy(module)
+    snapshot = pickle.dumps(module)
     updated = optimizations.inline_functions(
         module, callees=callees, max_callee_ops=limit
     )
     verify.module(updated)
     hypothesis.event(f"rewritten={updated is not module}")
-    assert module == snapshot
+    assert pickle.dumps(module) == snapshot
     assert updated.globals == module.globals
     assert updated.attributes == module.attributes
     assert [(f.name, f.type, f.attributes) for f in updated.functions] == [

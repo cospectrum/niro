@@ -1,6 +1,6 @@
-import copy
 import dataclasses
 import itertools
+import pickle
 from collections.abc import Sequence
 from collections.abc import Set as AbstractSet
 
@@ -122,7 +122,7 @@ def test_repeated_calls_get_fresh_values_and_preserve_input() -> None:
         ],
     )
     original = verify.module(ir.Module(functions=[caller, helper]))
-    snapshot = copy.deepcopy(original)
+    snapshot = pickle.dumps(original)
     updated = optimizations.inline_functions(original)
     optimized = named(updated, "caller")
     assert calls(optimized) == []
@@ -137,7 +137,7 @@ def test_repeated_calls_get_fresh_values_and_preserve_input() -> None:
         == ((28,), [])
     )
     assert named(updated, "double") is helper
-    assert original == snapshot
+    assert pickle.dumps(original) == snapshot
     assert optimizations.inline_functions(updated) is updated
 
 
@@ -275,7 +275,7 @@ def test_nested_calls_clone_nested_regions_and_captures(condition: bool) -> None
         ],
     )
     original = verify.module(ir.Module(functions=[caller, helper]))
-    snapshot = copy.deepcopy(original)
+    snapshot = pickle.dumps(original)
     updated = optimizations.inline_functions(original)
     optimized = named(updated, "caller")
     assert calls(optimized) == []
@@ -294,7 +294,7 @@ def test_nested_calls_clone_nested_regions_and_captures(condition: bool) -> None
             ],
         )
     )
-    assert original == snapshot
+    assert pickle.dumps(original) == snapshot
 
 
 @pytest.mark.parametrize(
@@ -469,7 +469,7 @@ def test_preserves_globals_signatures_names_metadata_and_definitions() -> None:
             functions=[caller, helper], globals=[global_], attributes={"tag": "module"}
         )
     )
-    snapshot = copy.deepcopy(original)
+    snapshot = pickle.dumps(original)
     updated = optimizations.inline_functions(original)
     optimized = named(updated, "caller")
     assert optimized.type == caller.type
@@ -484,7 +484,7 @@ def test_preserves_globals_signatures_names_metadata_and_definitions() -> None:
         == evaluate(original, "caller", (3,))
         == ((10,), [])
     )
-    assert original == snapshot
+    assert pickle.dumps(original) == snapshot
 
 
 def test_inlining_exposes_transposes_to_simplification() -> None:
@@ -519,10 +519,10 @@ def test_empty_and_external_only_modules_are_unchanged() -> None:
 
 def test_negative_limit_is_rejected_without_mutating_input() -> None:
     original = verify.module(ir.Module())
-    snapshot = copy.deepcopy(original)
+    snapshot = pickle.dumps(original)
     with pytest.raises(ValueError, match="nonnegative"):
         optimizations.inline_functions(original, max_callee_ops=-1)
-    assert original == snapshot
+    assert pickle.dumps(original) == snapshot
 
 
 @pytest.mark.parametrize(
@@ -555,13 +555,13 @@ def test_selection_applies_to_targets_in_every_caller(
     )
     functions = {f.name: f for f in (leaf, middle, root)}
     original = verify.module(ir.Module(functions=[functions[name] for name in order]))
-    snapshot = copy.deepcopy(original)
+    snapshot = pickle.dumps(original)
     selected_snapshot = None if callees is None else set(callees)
     updated = optimizations.inline_functions(original, callees=callees)
     assert [op.callee for op in calls(named(updated, "root"))] == root_targets
     assert [op.callee for op in calls(named(updated, "middle"))] == middle_targets
     assert evaluate(updated, "root", (7,)) == evaluate(original, "root", (7,))
-    assert original == snapshot
+    assert pickle.dumps(original) == snapshot
     assert callees == selected_snapshot
     assert optimizations.inline_functions(updated, callees=callees) is updated
     if callees in (set(), {"root"}):
@@ -621,7 +621,30 @@ def test_selection_rejects_unknown_functions_without_mutation(
     original = verify.module(
         ir.Module(functions=[helper], globals=[ir.Global("global", x.type, 0)])
     )
-    snapshot = copy.deepcopy(original)
+    snapshot = pickle.dumps(original)
     with pytest.raises(ValueError, match="Unknown callee functions"):
         optimizations.inline_functions(original, callees=callees)
-    assert original == snapshot
+    assert pickle.dumps(original) == snapshot
+
+
+def test_inlines_single_block_helpers_in_cfg_callers_and_skips_cfg_callees() -> None:
+    x, result = value(0), value(1)
+    helper = function("helper", (x,), [ir.Add(result, x, x), ir.Return((result,))])
+    exit_ = ir.Block(operations=[ir.Return((result,))])
+    entry = ir.Block((x,), [ir.Call("helper", (x,), (result,)), ir.Branch(exit_)])
+    cfg = ir.Function("cfg", helper.type, ir.Region([entry, exit_]))
+    caller = function(
+        "caller", (x,), [ir.Call("cfg", (x,), (result,)), ir.Return((result,))]
+    )
+    original = verify.module(ir.Module(functions=[helper, cfg, caller]))
+    snapshot = pickle.dumps(original)
+    updated = optimizations.inline_functions(original)
+    assert calls(named(updated, "cfg")) == []
+    assert [op.callee for op in calls(named(updated, "caller"))] == ["cfg"]
+    updated_cfg = named(updated, "cfg")
+    assert updated_cfg.body is not None
+    assert ir.get_successors(block(updated_cfg).operations[-1]) == (
+        updated_cfg.body.blocks[1],
+    )
+    assert pickle.dumps(original) == snapshot
+    assert optimizations.inline_functions(updated) is updated
