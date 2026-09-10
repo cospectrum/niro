@@ -41,7 +41,12 @@ Test meaningful behavior and invariants.
 
 Keep documentation concise and introduce concepts before relying on them.
 When public APIs or behavior change, update affected documentation and examples,
-including `README.md` and `docs/index.md`. Keep shared content consistent.
+keeping shared content consistent.
+
+Keep `README.md` minimal: a project overview, installation, basic usage, and
+links to documentation. Do not add feature announcements or document new APIs
+there. Update it only when its existing content needs to change. Document new
+features in the relevant documentation pages and Python APIs in source docstrings.
 
 Keep [docs/ir.md](docs/ir.md) language agnostic: it defines the IR's concepts,
 structure, semantics, and validity rules. Do not add implementation details such
