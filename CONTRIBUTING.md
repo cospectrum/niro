@@ -9,6 +9,7 @@ work; see [todo.md](todo.md) for the roadmap.
 | --- | --- |
 | Install locked dependencies with [uv] | `uv sync --locked` |
 | Unit and integration tests | `uv run pytest tests/unit` |
+| Property tests | `uv run pytest tests/property` |
 | End-to-end tests | `uv run pytest tests/e2e` |
 | Full local CI | `nix run .#ci` |
 | Preview docs while editing | `uv run zensical serve` |
@@ -16,6 +17,21 @@ work; see [todo.md](todo.md) for the roadmap.
 
 Test meaningful behavior and invariants. Unit tests mirror `src/` under
 `tests/unit/`; group end-to-end tests under `tests/e2e/` by interface or workflow.
+
+Property tests use Hypothesis under `tests/property/`, mirroring the source
+modules where useful. Like unit tests, name files after the source module,
+such as `optimizations/test_inlining.py`. Generate bounded,
+valid programs and check semantic preservation as well as IR validity and input
+immutability. Check idempotence when it is part of the pass behavior. CI runs
+unit tests, property tests, then end-to-end tests. The shared Hypothesis profile
+runs 1,000 examples per test. Use `--hypothesis-show-statistics` to inspect runtime
+and generated-case events when tuning generators or the example budget.
+
+When an API requires `VerifiedModule`, obtain it through `verify.module(module)`
+(or the builder's `module.verify()`), including in tests. Calling
+`ir.VerifiedModule(module)` directly only applies a type marker; it does not
+validate the IR. Verify completed transformation results unless the API already
+does so before returning.
 
 ## Code
 
@@ -29,6 +45,9 @@ Test meaningful behavior and invariants. Unit tests mirror `src/` under
   Use behavior-owning classes only for shared mutable state (builders, value
   allocators) or resource lifecycles; avoid inheritance and classes that merely
   group functions.
+- Name optimization modules by subject or transformation (`inlining.py`,
+  `transpose.py`) and pass functions by action (`inline_functions`,
+  `simplify_transposes`).
 - Prefer guard clauses and early returns over nesting.
 - Every function and type defined under `src/` must have a docstring, including
   private helpers, methods, classes, and type aliases. For functions, explain

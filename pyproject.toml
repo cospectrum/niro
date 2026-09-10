@@ -26,6 +26,7 @@ data = { scripts = "scripts/bin" }
 [dependency-groups]
 dev = [
     "coverage>=7.15.4",
+    "hypothesis>=6.168.0",
     "mkdocstrings-python>=2.0.5",
     "pytest>=9.1.1",
     "ruff>=0.16.5",
