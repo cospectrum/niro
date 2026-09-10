@@ -8,8 +8,9 @@ across functions can coordinate edits over the whole module.
 from collections.abc import Callable
 
 from niro.ir import VerifiedModule
+from niro.optimizations.transpose import simplify_transposes
 
-__all__ = ["ModulePass"]
+__all__ = ["ModulePass", "simplify_transposes"]
 
 type ModulePass = Callable[[VerifiedModule], VerifiedModule]
 """A callable that takes and returns a [`VerifiedModule`][niro.ir.VerifiedModule].
