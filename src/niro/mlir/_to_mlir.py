@@ -61,7 +61,7 @@ def _lower_function(
         result.attributes.update(_lower_attributes(function.attributes))
         return (), result
     generated_globals: list[Operation] = []
-    body = _emit_region(function.body, {}, generated_globals, function.name)
+    body = _emit_function_body(function.body, generated_globals, function.name)
     result = func.FuncOp(function.name, (inputs, outputs), body)
     result.attributes.update(_lower_attributes(function.attributes))
     return tuple(generated_globals), result
@@ -170,13 +170,13 @@ def _emit_operation(
             lowered = scf.IfOp(
                 _lookup_value(values, operation.condition),
                 [_lower_type(value.type) for value in operation.results],
-                _emit_region(
+                _emit_if_region(
                     operation.then_region,
                     values,
                     generated_globals,
                     function_name,
                 ),
-                _emit_region(
+                _emit_if_region(
                     operation.else_region,
                     values,
                     generated_globals,
@@ -193,23 +193,22 @@ def _emit_operation(
             assert_never(unreachable)
 
 
-def _emit_region(
+def _emit_function_body(
     region: ir.Region,
-    visible_values: ValueTable,
     generated_globals: list[Operation],
     function_name: str,
 ) -> Region:
-    """Lower a CFG in reverse postorder while preserving source block layout.
+    """Lower a function CFG in reverse postorder, preserving source block layout.
 
     Precreate blocks and arguments for forward edges and loop backedges. Emit
-    dominating definitions before their uses. Copy enclosing value bindings so
-    region-local values do not escape; share the generated constant globals.
+    dominating definitions before their uses. Share the generated constant
+    globals with nested If lowering.
     """
     blocks = {
         source: Block(arg_types=[_lower_type(v.type) for v in source.arguments])
         for source in region.blocks
     }
-    values = dict(visible_values)
+    values: ValueTable = {}
     for source, target in blocks.items():
         _bind_results(values, source.arguments, tuple(target.args))
     visited: set[ir.Block] = set()
@@ -237,6 +236,30 @@ def _emit_region(
             blocks,
         )
     return Region(list(blocks.values()))
+
+
+def _emit_if_region(
+    region: ir.Region,
+    visible_values: ValueTable,
+    generated_globals: list[Operation],
+    function_name: str,
+) -> Region:
+    """Lower a verified If arm directly into one argument-free MLIR block.
+
+    Emit operations in order with no CFG traversal or branch destinations.
+    Copy captured bindings so local results cannot escape to sibling arms.
+    """
+    (source,) = region.blocks
+    block = Block()
+    _emit_operations(
+        block,
+        dict(visible_values),
+        generated_globals,
+        function_name,
+        source.operations,
+        {},
+    )
+    return Region(block)
 
 
 def _emit_const(

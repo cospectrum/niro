@@ -78,12 +78,10 @@ def _verify_function(
     if function.body is None:
         return
     _verify_value_ids(function.body)
-    _verify_region(
+    _verify_function_body(
         region=function.body,
-        outer_scope={},
         input_types=function.type.inputs,
         output_types=function.type.outputs,
-        terminator=ir.Return,
         functions=functions,
         globals_=globals_,
     )
@@ -109,35 +107,19 @@ def _verify_value_ids(region: ir.Region) -> None:
             raise ValueError(f"duplicate value ID in function: {value_id}")
 
 
-def _verify_region(
+def _verify_function_body(
     region: ir.Region,
-    outer_scope: Mapping[ir.ValueId, ir.Type],
     input_types: tuple[ir.Type, ...],
     output_types: tuple[ir.Type, ...],
-    terminator: type[Terminator],
     *,
     functions: Mapping[ir.SymbolName, ir.Function],
     globals_: Mapping[ir.SymbolName, ir.Global],
 ) -> None:
-    """Validate entry inputs, CFG edges, dominance, and each block's contents."""
+    """Validate function inputs and scoped operations using CFG dominance."""
     if not region.blocks:
         raise ValueError("region must contain a block")
-    if terminator is ir.Yield and len(region.blocks) != 1:
-        raise ValueError("if regions must contain exactly one block")
     if tuple(value.type for value in region.blocks[0].arguments) != input_types:
         raise TypeError("region argument types do not match expected input types")
-    if terminator is ir.Yield:
-        block = region.blocks[0]
-        _verify_terminator(block, terminator)
-        _verify_block(
-            block,
-            outer_scope,
-            output_types,
-            terminator,
-            functions=functions,
-            globals_=globals_,
-        )
-        return
     dominators = _verify_cfg(region)
     definitions = {
         block: {
@@ -150,17 +132,38 @@ def _verify_region(
         for block in region.blocks
     }
     for block in region.blocks:
-        scope = dict(outer_scope)
+        scope: dict[ir.ValueId, ir.Type] = {}
         for dominator in dominators[block] - {block}:
             scope.update(definitions[dominator])
         _verify_block(
             block,
             scope,
             output_types,
-            terminator,
             functions=functions,
             globals_=globals_,
         )
+
+
+def _verify_if_region(
+    region: ir.Region,
+    outer_scope: Mapping[ir.ValueId, ir.Type],
+    output_types: tuple[ir.Type, ...],
+    *,
+    functions: Mapping[ir.SymbolName, ir.Function],
+    globals_: Mapping[ir.SymbolName, ir.Global],
+) -> None:
+    """Require one argument-free block ending in Yield, then check its operations."""
+    if not region.blocks:
+        raise ValueError("region must contain a block")
+    if len(region.blocks) != 1:
+        raise ValueError("if regions must contain exactly one block")
+    (block,) = region.blocks
+    if block.arguments:
+        raise TypeError("region argument types do not match expected input types")
+    _verify_terminator(block, ir.Yield)
+    _verify_block(
+        block, outer_scope, output_types, functions=functions, globals_=globals_
+    )
 
 
 def _verify_terminator(block: ir.Block, terminator: type[Terminator]) -> None:
@@ -240,18 +243,18 @@ def _verify_block(
     block: ir.Block,
     outer_scope: Mapping[ir.ValueId, ir.Type],
     output_types: tuple[ir.Type, ...],
-    terminator: type[Terminator],
     *,
     functions: Mapping[ir.SymbolName, ir.Function],
     globals_: Mapping[ir.SymbolName, ir.Global],
 ) -> None:
-    """Validate scoped operands, symbols, nested regions, and the final terminator.
+    """Validate scoped operands, symbols, nested regions, and exit value types.
 
+    Block structure and terminator placement have already been checked.
     Outer bindings remain unchanged; each result becomes visible only after its
     operation has been checked.
     """
     scope = {**outer_scope, **{value.id: value.type for value in block.arguments}}
-    for index, op in enumerate(block.operations):
+    for op in block.operations:
         for operand in ir.get_operands(op):
             if operand.id not in scope:
                 raise ValueError(f"value {operand.id} is not defined in this scope")
@@ -263,8 +266,6 @@ def _verify_block(
             case ir.Branch() | ir.CondBranch():
                 pass  # Placement and target signatures were checked with the CFG.
             case ir.Return() | ir.Yield():
-                if index != len(block.operations) - 1 or not isinstance(op, terminator):
-                    raise ValueError("unexpected block terminator")
                 if tuple(value.type for value in op.operands) != output_types:
                     raise TypeError(
                         "terminator operand types do not match region results"
@@ -285,24 +286,14 @@ def _verify_block(
                     raise TypeError("global load type does not match global type")
             case ir.If():
                 result_types = tuple(value.type for value in op.results)
-                _verify_region(
-                    region=op.then_region,
-                    outer_scope=scope,
-                    input_types=(),
-                    output_types=result_types,
-                    terminator=ir.Yield,
-                    functions=functions,
-                    globals_=globals_,
-                )
-                _verify_region(
-                    region=op.else_region,
-                    outer_scope=scope,
-                    input_types=(),
-                    output_types=result_types,
-                    terminator=ir.Yield,
-                    functions=functions,
-                    globals_=globals_,
-                )
+                for region in (op.then_region, op.else_region):
+                    _verify_if_region(
+                        region,
+                        scope,
+                        result_types,
+                        functions=functions,
+                        globals_=globals_,
+                    )
 
             case (
                 ir.Const()
