@@ -336,7 +336,7 @@ def test_duplicate_value_definitions(definition: str) -> None:
             [ir.Block(operations=[ir.Return()]), ir.Block(operations=[ir.Return()])],
             (),
             ValueError,
-            "multiple blocks per region are not supported yet",
+            "region contains unreachable blocks",
         ),
         ([ir.Block()], (), ValueError, "must end with Return"),
         ([ir.Block(operations=[ir.Yield()])], (), ValueError, "must end with Return"),
@@ -547,7 +547,7 @@ def test_invalid_if_regions(scenario: str) -> None:
             message = "region must contain a block"
         case "multiple-blocks":
             then.blocks.append(ir.Block(operations=[ir.Yield((value,))]))
-            message = "multiple blocks per region are not supported yet"
+            message = "if regions must contain exactly one block"
         case "branch-arguments":
             then.blocks[0].arguments = (ir.Value(ir.ValueId(3), ir.ScalarType.I32),)
             error, message = TypeError, "region argument types"
@@ -620,3 +620,172 @@ def test_invalid_interface_names(
 
     with pytest.raises(ValueError, match=f"{kind} names.*{message}"):
         verify.module(ir.Module(functions=[function]))
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("invalid_use", [False, True])
+def test_diamond_dominance_and_block_arguments(
+    reverse: bool, invalid_use: bool
+) -> None:
+    flag = ir.Value(ir.ValueId(0), ir.ScalarType.BOOL)
+    x, left_value, merged = (
+        ir.Value(ir.ValueId(i), ir.ScalarType.I32) for i in range(1, 4)
+    )
+    join = ir.Block((merged,), [ir.Return((left_value if invalid_use else merged,))])
+    left = ir.Block(
+        operations=[ir.Add(left_value, x, x), ir.Branch(join, (left_value,))]
+    )
+    right = ir.Block(operations=[ir.Branch(join, (x,))])
+    entry = ir.Block((flag, x), [ir.CondBranch(flag, left, right)])
+    rest = [left, right, join]
+    module = _module_with_body(
+        [entry, *(reversed(rest) if reverse else rest)],
+        (flag.type, x.type),
+        (x.type,),
+    )
+    if invalid_use:
+        with pytest.raises(ValueError, match="not defined in this scope"):
+            verify.module(module)
+    else:
+        assert verify.module(module) is module
+
+
+def test_loop_carried_arguments_and_nonterminating_loop() -> None:
+    x, carried, updated = (ir.Value(ir.ValueId(i), ir.ScalarType.I32) for i in range(3))
+    loop = ir.Block((carried,))
+    loop.operations = [ir.Add(updated, carried, x), ir.Branch(loop, (updated,))]
+    entry = ir.Block((x,), [ir.Branch(loop, (x,))])
+    module = _module_with_body([entry, loop], (x.type,))
+    assert verify.module(module) is module
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "foreign",
+        "entry",
+        "arity",
+        "type",
+        "condition",
+        "early",
+        "forward",
+        "reference-type",
+    ],
+)
+def test_invalid_control_flow(scenario: str) -> None:
+    flag = ir.Value(ir.ValueId(0), ir.ScalarType.BOOL)
+    x, arg, later = (ir.Value(ir.ValueId(i), ir.ScalarType.I32) for i in range(1, 4))
+    target = ir.Block((arg,), [ir.Return()])
+    entry = ir.Block((flag, x), [ir.CondBranch(flag, target, target, (x,), (x,))])
+    error: type[Exception] = ValueError
+    match scenario:
+        case "foreign":
+            entry.operations = [ir.Branch(ir.Block((arg,), [ir.Return()]), (x,))]
+            message = "outside the current region"
+        case "entry":
+            target.operations = [ir.Branch(entry, (flag, x))]
+            message = "entry block"
+        case "arity":
+            entry.operations = [ir.CondBranch(flag, target, target, (x,), ())]
+            error, message = TypeError, "branch argument types"
+        case "type":
+            entry.operations = [ir.CondBranch(flag, target, target, (x,), (flag,))]
+            error, message = TypeError, "branch argument types"
+        case "condition":
+            entry.operations = [ir.CondBranch(x, target, target, (x,), (x,))]
+            error, message = TypeError, "condition must be boolean"
+        case "early":
+            entry.operations.append(ir.Return())
+            message = "unexpected block terminator"
+        case "forward":
+            target.operations = [ir.Add(arg, later, x), ir.Const(later, 1), ir.Return()]
+            target.arguments = ()
+            entry.operations = [ir.Branch(target)]
+            message = "not defined in this scope"
+        case _:
+            target.operations = [ir.Return((ir.Value(x.id, ir.ScalarType.BOOL),))]
+            error, message = TypeError, "type differs from its definition"
+    module = _module_with_body([entry, target], (flag.type, x.type))
+    with pytest.raises(error, match=message):
+        verify.module(module)
+
+
+@pytest.mark.parametrize("multiblock", [False, True])
+@pytest.mark.parametrize("arm", ["then", "else"])
+def test_if_captures_dominating_values_but_rejects_multiblock_arms(
+    multiblock: bool, arm: str
+) -> None:
+    flag = ir.Value(ir.ValueId(0), ir.ScalarType.BOOL)
+    x, doubled, result = (
+        ir.Value(ir.ValueId(i), ir.ScalarType.I32) for i in range(1, 4)
+    )
+    selected_exit = ir.Block(operations=[ir.Yield((doubled,))])
+    selected = ir.Region([selected_exit])
+    if multiblock:
+        selected.blocks.insert(0, ir.Block(operations=[ir.Branch(selected_exit)]))
+    other = ir.Region([ir.Block(operations=[ir.Yield((x,))])])
+    nested = ir.If(
+        (result,),
+        flag,
+        selected if arm == "then" else other,
+        selected if arm == "else" else other,
+    )
+    exit_ = ir.Block(operations=[nested, ir.Return((result,))])
+    entry = ir.Block((flag, x), [ir.Add(doubled, x, x), ir.Branch(exit_)])
+    module = _module_with_body([entry, exit_], (flag.type, x.type), (x.type,))
+    if multiblock:
+        with pytest.raises(
+            ValueError, match="if regions must contain exactly one block"
+        ):
+            verify.module(module)
+    else:
+        assert verify.module(module) is module
+
+
+@pytest.mark.parametrize(
+    "scenario", ["duplicate-block", "shared-region", "cyclic-ownership"]
+)
+def test_control_flow_ownership(scenario: str) -> None:
+    flag = ir.Value(ir.ValueId(0), ir.ScalarType.BOOL)
+    body = ir.Region([ir.Block((flag,), [ir.Return()])])
+    if scenario == "duplicate-block":
+        body.blocks.append(body.blocks[0])
+    else:
+        nested = ir.Region([ir.Block(operations=[ir.Yield()])])
+        body.blocks[0].operations.insert(
+            0,
+            ir.If((), flag, nested, body if scenario == "cyclic-ownership" else nested),
+        )
+    module = _module_with_body(body.blocks, (flag.type,))
+    with pytest.raises(ValueError, match="unique owner"):
+        verify.module(module)
+
+
+@pytest.mark.parametrize("arm", ["then", "else"])
+@pytest.mark.parametrize("kind", ["branch", "conditional", "return"])
+@pytest.mark.parametrize("early", [False, True])
+def test_if_rejects_other_terminators(arm: str, kind: str, early: bool) -> None:
+    flag = ir.Value(ir.ValueId(0), ir.ScalarType.BOOL)
+    selected = ir.Block()
+    terminator: ir.Op = (
+        ir.Branch(selected)
+        if kind == "branch"
+        else ir.CondBranch(flag, selected, selected)
+        if kind == "conditional"
+        else ir.Return()
+    )
+    selected.operations = [terminator, ir.Yield()] if early else [terminator]
+    other = ir.Region([ir.Block(operations=[ir.Yield()])])
+    selected_region = ir.Region([selected])
+    conditional = ir.If(
+        (),
+        flag,
+        selected_region if arm == "then" else other,
+        selected_region if arm == "else" else other,
+    )
+    module = _module_with_body(
+        [ir.Block((flag,), [conditional, ir.Return()])], (flag.type,)
+    )
+    message = "unexpected block terminator" if early else "must end with Yield"
+    with pytest.raises(ValueError, match=message):
+        verify.module(module)

@@ -46,7 +46,9 @@ from typing import assert_never
 
 from niro.ir.ops import (
     Add,
+    Branch,
     Call,
+    CondBranch,
     Const,
     GetGlobal,
     If,
@@ -54,6 +56,7 @@ from niro.ir.ops import (
     Mul,
     Op,
     Return,
+    TensorExtract,
     Transpose,
     UnknownOp,
     Yield,
@@ -71,6 +74,7 @@ __all__ = [
     "get_parent_block",
     "get_regions",
     "get_results",
+    "get_successors",
     "iter_blocks",
     "iter_defined_values",
     "iter_ops",
@@ -238,12 +242,16 @@ def get_operands(op: Op) -> tuple[Value, ...]:
     match op:
         case Const() | GetGlobal():
             return ()
+        case TensorExtract():
+            return (op.operand, *op.indices)
         case Transpose(operand=operand):
             return (operand,)
         case Add(lhs=lhs, rhs=rhs) | Mul(lhs=lhs, rhs=rhs) | MatMul(lhs=lhs, rhs=rhs):
             return lhs, rhs
-        case Call(arguments=arguments):
+        case Call(arguments=arguments) | Branch(arguments=arguments):
             return arguments
+        case CondBranch():
+            return (op.condition, *op.true_arguments, *op.false_arguments)
         case Return(operands=operands) | Yield(operands=operands):
             return operands
         case If(condition=condition):
@@ -262,6 +270,7 @@ def get_results(op: Op) -> tuple[Value, ...]:
             Const(result=result)
             | GetGlobal(result=result)
             | Transpose(result=result)
+            | TensorExtract(result=result)
             | Add(result=result)
             | Mul(result=result)
             | MatMul(result=result)
@@ -269,7 +278,7 @@ def get_results(op: Op) -> tuple[Value, ...]:
             return (result,)
         case Call(results=results) | If(results=results) | UnknownOp(results=results):
             return results
-        case Return() | Yield():
+        case Return() | Yield() | Branch() | CondBranch():
             return ()
         case _ as unreachable:
             assert_never(unreachable)
@@ -280,18 +289,39 @@ def get_regions(op: Op) -> tuple[Region, ...]:
     match op:
         case If(then_region=then_region, else_region=else_region):
             return then_region, else_region
+        case UnknownOp(regions=regions):
+            return regions
         case (
             Const()
             | GetGlobal()
             | Transpose()
+            | TensorExtract()
             | Add()
             | Mul()
             | MatMul()
             | Call()
+            | Branch()
+            | CondBranch()
             | Return()
             | Yield()
-            | UnknownOp()
         ):
             return ()
         case _ as unreachable:
             assert_never(unreachable)
+
+
+def get_successors(op: Op) -> tuple[Block, ...]:
+    """Return successors in declaration order, true then false for CondBranch.
+
+    Preserve repeated targets, including opaque operation successors;
+    nested regions are not followed.
+    """
+    match op:
+        case Branch():
+            return (op.target,)
+        case CondBranch():
+            return op.true_target, op.false_target
+        case UnknownOp():
+            return op.successors
+        case _:
+            return ()

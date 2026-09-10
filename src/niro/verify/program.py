@@ -26,6 +26,7 @@ def module(module_: Module) -> VerifiedModule:
 def _verify_module(module_: ir.Module) -> None:
     """Validate module symbols, global literals, and every function definition."""
     _verify_symbol_names(module_)
+    _verify_ownership(module_)
     for global_ in module_.globals:
         _verify_literal(
             global_.type,
@@ -36,6 +37,24 @@ def _verify_module(module_: ir.Module) -> None:
     globals_ = {global_.name: global_ for global_ in module_.globals}
     for function in module_.functions:
         _verify_function(function, functions, globals_)
+
+
+def _verify_ownership(module: ir.Module) -> None:
+    """Reject shared or cyclic region/block ownership before recursive traversal."""
+    regions: set[int] = set()
+    blocks: set[ir.Block] = set()
+    pending = [f.body for f in module.functions if f.body is not None]
+    while pending:
+        region = pending.pop()
+        if id(region) in regions:
+            raise ValueError("region must have a unique owner")
+        regions.add(id(region))
+        for block in region.blocks:
+            if block in blocks:
+                raise ValueError("block must have a unique owner")
+            blocks.add(block)
+            for op in block.operations:
+                pending.extend(ir.get_regions(op))
 
 
 def _verify_symbol_names(module: ir.Module) -> None:
@@ -59,12 +78,10 @@ def _verify_function(
     if function.body is None:
         return
     _verify_value_ids(function.body)
-    _verify_region(
+    _verify_function_body(
         region=function.body,
-        outer_scope={},
         input_types=function.type.inputs,
         output_types=function.type.outputs,
-        terminator=ir.Return,
         functions=functions,
         globals_=globals_,
     )
@@ -90,53 +107,132 @@ def _verify_value_ids(region: ir.Region) -> None:
             raise ValueError(f"duplicate value ID in function: {value_id}")
 
 
-def _verify_region(
+def _verify_function_body(
     region: ir.Region,
-    outer_scope: Mapping[ir.ValueId, ir.Type],
     input_types: tuple[ir.Type, ...],
     output_types: tuple[ir.Type, ...],
-    terminator: type[Terminator],
     *,
     functions: Mapping[ir.SymbolName, ir.Function],
     globals_: Mapping[ir.SymbolName, ir.Global],
 ) -> None:
-    """Require a single block with the expected inputs and validate its contents."""
+    """Validate function inputs and scoped operations using CFG dominance."""
     if not region.blocks:
         raise ValueError("region must contain a block")
-    if len(region.blocks) != 1:
-        raise ValueError("multiple blocks per region are not supported yet")
     if tuple(value.type for value in region.blocks[0].arguments) != input_types:
         raise TypeError("region argument types do not match expected input types")
     for block in region.blocks:
-        _verify_block(
-            block,
-            outer_scope,
-            output_types,
-            terminator,
-            functions=functions,
-            globals_=globals_,
-        )
+        _verify_terminator(block, ir.Return)
+    _verify_cfg_body(region, {}, output_types, functions=functions, globals_=globals_)
+
+
+def _verify_if_region(
+    region: ir.Region,
+    outer_scope: Mapping[ir.ValueId, ir.Type],
+    output_types: tuple[ir.Type, ...],
+    *,
+    functions: Mapping[ir.SymbolName, ir.Function],
+    globals_: Mapping[ir.SymbolName, ir.Global],
+) -> None:
+    """Require one argument-free block ending in Yield, then check its operations."""
+    if not region.blocks:
+        raise ValueError("region must contain a block")
+    if len(region.blocks) != 1:
+        raise ValueError("if regions must contain exactly one block")
+    (block,) = region.blocks
+    if block.arguments:
+        raise TypeError("region argument types do not match expected input types")
+    _verify_terminator(block, ir.Yield)
+    if ir.get_successors(block.operations[-1]):
+        raise ValueError("block must end with Yield")
+    _verify_block(
+        block, outer_scope, output_types, functions=functions, globals_=globals_
+    )
+
+
+def _verify_terminator(block: ir.Block, terminator: type[Terminator]) -> None:
+    """Require a final Yield in If arms, or a Return/branch in function blocks."""
+    if not block.operations or not (
+        isinstance(block.operations[-1], (terminator, ir.Branch, ir.CondBranch))
+        or ir.get_successors(block.operations[-1])
+    ):
+        suffix = " or a branch" if terminator is ir.Return else ""
+        raise ValueError(f"block must end with {terminator.__name__}{suffix}")
+    if any(_is_terminator(op) for op in block.operations[:-1]):
+        raise ValueError("unexpected block terminator")
+
+
+def _verify_cfg(region: ir.Region) -> dict[ir.Block, set[ir.Block]]:
+    """Validate a function body's edges and return its block dominator sets.
+
+    Require reachable blocks and no edges to entry. Loops need not have an exit.
+    Compute dominance by fixed-point predecessor intersection, independent of
+    the order of non-entry blocks.
+    """
+    entry = region.blocks[0]
+    predecessors: dict[ir.Block, set[ir.Block]] = {b: set() for b in region.blocks}
+    for block in region.blocks:
+        op = block.operations[-1]
+        edges: tuple[tuple[ir.Block, tuple[ir.Value, ...]], ...] = ()
+        if isinstance(op, ir.Branch):
+            edges = ((op.target, op.arguments),)
+        elif isinstance(op, ir.CondBranch):
+            edges = (
+                (op.true_target, op.true_arguments),
+                (op.false_target, op.false_arguments),
+            )
+        for target in ir.get_successors(op):
+            if target not in predecessors:
+                raise ValueError("branch target is outside the current region")
+            if target is entry:
+                raise ValueError("branches cannot target the region entry block")
+            predecessors[target].add(block)
+        for target, arguments in edges:
+            if tuple(v.type for v in arguments) != tuple(
+                v.type for v in target.arguments
+            ):
+                raise TypeError("branch argument types do not match target block")
+
+    reachable: set[ir.Block] = set()
+    pending = [entry]
+    while pending:
+        block = pending.pop()
+        if block in reachable:
+            continue
+        reachable.add(block)
+        pending.extend(ir.get_successors(block.operations[-1]))
+    if len(reachable) != len(region.blocks):
+        raise ValueError("region contains unreachable blocks")
+
+    dominators = {block: set(reachable) for block in region.blocks}
+    dominators[entry] = {entry}
+    changed = True
+    while changed:
+        changed = False
+        for block in region.blocks[1:]:
+            common = set.intersection(*(dominators[p] for p in predecessors[block]))
+            updated = {block} | common
+            if updated != dominators[block]:
+                dominators[block] = updated
+                changed = True
+    return dominators
 
 
 def _verify_block(
     block: ir.Block,
     outer_scope: Mapping[ir.ValueId, ir.Type],
-    output_types: tuple[ir.Type, ...],
-    terminator: type[Terminator],
+    output_types: tuple[ir.Type, ...] | None,
     *,
     functions: Mapping[ir.SymbolName, ir.Function],
     globals_: Mapping[ir.SymbolName, ir.Global],
 ) -> None:
-    """Validate scoped operands, symbols, nested regions, and the final terminator.
+    """Validate scoped operands, symbols, nested regions, and exit value types.
 
+    Block structure and terminator placement have already been checked.
     Outer bindings remain unchanged; each result becomes visible only after its
     operation has been checked.
     """
     scope = {**outer_scope, **{value.id: value.type for value in block.arguments}}
-    if not block.operations or not isinstance(block.operations[-1], terminator):
-        raise ValueError(f"region must end with {terminator.__name__}")
-
-    for index, op in enumerate(block.operations):
+    for op in block.operations:
         for operand in ir.get_operands(op):
             if operand.id not in scope:
                 raise ValueError(f"value {operand.id} is not defined in this scope")
@@ -145,10 +241,13 @@ def _verify_block(
 
         _verify_op(op)
         match op:
+            case ir.Branch() | ir.CondBranch():
+                pass  # Placement and target signatures were checked with the CFG.
             case ir.Return() | ir.Yield():
-                if index != len(block.operations) - 1 or not isinstance(op, terminator):
-                    raise ValueError("unexpected block terminator")
-                if tuple(value.type for value in op.operands) != output_types:
+                if (
+                    output_types is not None
+                    and tuple(value.type for value in op.operands) != output_types
+                ):
                     raise TypeError(
                         "terminator operand types do not match region results"
                     )
@@ -168,35 +267,85 @@ def _verify_block(
                     raise TypeError("global load type does not match global type")
             case ir.If():
                 result_types = tuple(value.type for value in op.results)
-                _verify_region(
-                    region=op.then_region,
-                    outer_scope=scope,
-                    input_types=(),
-                    output_types=result_types,
-                    terminator=ir.Yield,
-                    functions=functions,
-                    globals_=globals_,
-                )
-                _verify_region(
-                    region=op.else_region,
-                    outer_scope=scope,
-                    input_types=(),
-                    output_types=result_types,
-                    terminator=ir.Yield,
-                    functions=functions,
-                    globals_=globals_,
-                )
+                for region in (op.then_region, op.else_region):
+                    _verify_if_region(
+                        region,
+                        scope,
+                        result_types,
+                        functions=functions,
+                        globals_=globals_,
+                    )
 
+            case ir.UnknownOp():
+                for region in op.regions:
+                    _verify_unknown_region(
+                        region, scope, functions=functions, globals_=globals_
+                    )
             case (
                 ir.Const()
                 | ir.Add()
                 | ir.Mul()
                 | ir.MatMul()
                 | ir.Transpose()
-                | ir.UnknownOp()
+                | ir.TensorExtract()
             ):
                 pass
             case _ as unreachable:
                 assert_never(unreachable)
 
         scope.update((value.id, value.type) for value in ir.get_results(op))
+
+
+def _verify_unknown_region(
+    region: ir.Region,
+    outer_scope: Mapping[ir.ValueId, ir.Type],
+    *,
+    functions: Mapping[ir.SymbolName, ir.Function],
+    globals_: Mapping[ir.SymbolName, ir.Global],
+) -> None:
+    """Check opaque SSA regions structurally without inferring their signatures."""
+    if not region.blocks:
+        return
+    for block in region.blocks:
+        _verify_terminator(block, ir.Yield)
+    _verify_cfg_body(region, outer_scope, None, functions=functions, globals_=globals_)
+
+
+def _verify_cfg_body(
+    region: ir.Region,
+    outer_scope: Mapping[ir.ValueId, ir.Type],
+    output_types: tuple[ir.Type, ...] | None,
+    *,
+    functions: Mapping[ir.SymbolName, ir.Function],
+    globals_: Mapping[ir.SymbolName, ir.Global],
+) -> None:
+    """Verify scoped operations using captures and dominating CFG definitions."""
+    dominators = _verify_cfg(region)
+    definitions = {
+        block: {
+            value.id: value.type
+            for value in (
+                *block.arguments,
+                *(v for op in block.operations for v in ir.get_results(op)),
+            )
+        }
+        for block in region.blocks
+    }
+    for block in region.blocks:
+        scope = dict(outer_scope)
+        for dominator in dominators[block] - {block}:
+            scope.update(definitions[dominator])
+        _verify_block(
+            block,
+            scope,
+            output_types,
+            functions=functions,
+            globals_=globals_,
+        )
+
+
+def _is_terminator(op: ir.Op) -> bool:
+    """Identify known terminators and opaque operations with successors."""
+    return isinstance(op, (ir.Return, ir.Yield, ir.Branch, ir.CondBranch)) or bool(
+        ir.get_successors(op)
+    )

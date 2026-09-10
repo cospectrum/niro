@@ -187,7 +187,7 @@ class FunctionRegionBuilder(Builder[Region]):
 
 
 class IfRegionBuilder(Builder[Region]):
-    """Builder for an If branch containing a single argument-free block.
+    """Builder for an If region containing a single argument-free block.
 
     Attributes:
         raw: The [`niro.ir.Region`][] under construction.
@@ -199,7 +199,7 @@ class IfRegionBuilder(Builder[Region]):
         self.raw: Region = region
 
     def block(self) -> BlockBuilder:
-        """Create the branch's only block, without arguments."""
+        """Create the region's only block, without arguments."""
         if self.raw.blocks:
             raise ValueError("if region already has a block")
         block = ir.Block()
@@ -362,8 +362,15 @@ class BlockBuilder(Builder[Block]):
         operands: Sequence[Value] = (),
         result_types: Sequence[Type] = (),
         attributes: Mapping[AttributeName, AttributeValue] | None = None,
+        regions: Sequence[Region] = (),
+        successors: Sequence[Block] = (),
     ) -> tuple[Value, ...]:
-        """Append an unknown operation and return its results."""
+        """Append an opaque operation and return its results.
+
+        Regions are adopted without copying and must have unique ownership.
+        Successors reference blocks in the current region and make this operation
+        a terminator. Callers construct region values with function-unique IDs.
+        """
         operands = tuple(operands)
 
         def create(results: tuple[Value, ...]) -> UnknownOp:
@@ -373,17 +380,36 @@ class BlockBuilder(Builder[Block]):
                 operands=operands,
                 results=results,
                 attributes=dict(attributes or {}),
+                regions=tuple(regions),
+                successors=tuple(successors),
             )
 
         op = self._append_operation(result_types, create)
         return op.results
+
+    def tensor_extract(self, operand: Value, indices: Sequence[Value] = ()) -> Value:
+        """Read a tensor element as a scalar, preserving the immutable tensor."""
+        indices = tuple(indices)
+        result_type = ir.infer.tensor_extract_result_type(
+            operand.type, tuple(index.type for index in indices)
+        )
+
+        def create(results: tuple[Value, ...]) -> ir.TensorExtract:
+            """Return an element read defining the allocated scalar result."""
+            return ir.TensorExtract(results[0], operand, indices)
+
+        return self._append_operation([result_type], create).result
 
     def if_(
         self,
         condition: Value,
         result_types: Sequence[Type] = (),
     ) -> IfBuilder:
-        """Append a conditional and return its region builders."""
+        """Append a conditional and return both single-block region builders.
+
+        Each region must be completed with one argument-free block yielding
+        values of the result types, including an empty tuple for no results.
+        """
         then_region = IfRegionBuilder(self._ctx, ir.Region())
         else_region = IfRegionBuilder(self._ctx, ir.Region())
 
@@ -438,6 +464,61 @@ class BlockBuilder(Builder[Block]):
 
         op = self._append_operation(result_types, create)
         return op.results
+
+    def branch(self, target: BlockBuilder | Block, *arguments: Value) -> None:
+        """Append a jump to a block in this region, passing its arguments.
+
+        Accept a block builder or raw block. Verification checks destination
+        membership and argument types after construction is complete.
+
+        Examples:
+            Build a two-block identity function:
+
+            ```python
+            from niro import builder, ir
+
+            module = builder.ModuleBuilder()
+            function = module.function(
+                name="identity",
+                type=ir.FunctionType((ir.ScalarType.I32,), (ir.ScalarType.I32,)),
+            )
+            body = function.region()
+            entry = body.first_block()
+            exit_block = body.block((ir.ScalarType.I32,))
+            entry.branch(exit_block, *entry.raw.arguments)
+            exit_block.return_(*exit_block.raw.arguments)
+            module.verify()
+            ```
+        """
+        destination = target.raw if isinstance(target, BlockBuilder) else target
+        self.raw.operations.append(ir.Branch(destination, arguments))
+
+    def cond_branch(
+        self,
+        condition: Value,
+        true_target: BlockBuilder | Block,
+        false_target: BlockBuilder | Block,
+        true_arguments: Sequence[Value] = (),
+        false_arguments: Sequence[Value] = (),
+    ) -> None:
+        """Append a conditional jump with separate argument tuples for each edge.
+
+        Accept block builders or raw blocks in the current region. Verification
+        checks the scalar boolean condition, destinations, and argument types.
+        """
+        self.raw.operations.append(
+            ir.CondBranch(
+                condition,
+                true_target.raw
+                if isinstance(true_target, BlockBuilder)
+                else true_target,
+                false_target.raw
+                if isinstance(false_target, BlockBuilder)
+                else false_target,
+                tuple(true_arguments),
+                tuple(false_arguments),
+            )
+        )
 
     def return_(self, *operands: Value) -> None:
         """Terminate the block by returning values from the function."""

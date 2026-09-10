@@ -12,6 +12,91 @@ from niro import ir
 from niro.onnx import _from_onnx, op_type
 
 
+@pytest.mark.parametrize("condition_shape", [(), (1,), (1, 1)])
+def test_imports_nested_if_with_scoped_initializers(
+    condition_shape: tuple[int, ...],
+) -> None:
+    branches = []
+    for contents in ((1, 2), (3, 4)):
+        branches.append(
+            helper.make_graph(
+                [helper.make_node("Add", ["x", "local"], ["sum"])],
+                "branch",
+                [],
+                [helper.make_tensor_value_info("sum", TensorProto.FLOAT, [2])],
+                initializer=[
+                    helper.make_tensor("local", TensorProto.FLOAT, [2], contents)
+                ],
+            )
+        )
+    nested = helper.make_graph(
+        [
+            helper.make_node(
+                "If",
+                ["condition"],
+                ["nested"],
+                then_branch=branches[0],
+                else_branch=branches[1],
+            )
+        ],
+        "nested_branch",
+        [],
+        [helper.make_tensor_value_info("nested", TensorProto.FLOAT, [2])],
+    )
+    other = helper.make_graph(
+        [helper.make_node("Add", ["x", "bias"], ["sum"])],
+        "other",
+        [],
+        [helper.make_tensor_value_info("sum", TensorProto.FLOAT, [2])],
+    )
+    model = helper.make_model(
+        helper.make_graph(
+            [
+                helper.make_node(
+                    "If",
+                    ["condition"],
+                    ["result"],
+                    then_branch=nested,
+                    else_branch=other,
+                )
+            ],
+            "main",
+            [
+                helper.make_tensor_value_info(
+                    "condition", TensorProto.BOOL, condition_shape
+                ),
+                helper.make_tensor_value_info("x", TensorProto.FLOAT, [2]),
+            ],
+            [helper.make_tensor_value_info("result", TensorProto.FLOAT, [2])],
+            initializer=[helper.make_tensor("bias", TensorProto.FLOAT, [2], [5, 6])],
+        ),
+        opset_imports=[helper.make_opsetid("", 14)],
+    )
+    onnx.checker.check_model(model, full_check=True)
+    original = model.SerializeToString()
+    module = niro.from_onnx(model)
+    assert model.SerializeToString() == original
+    body = module.functions[0].body
+    assert body is not None
+    operations = list(ir.iter_ops(body))
+    conditionals = [op for op in operations if isinstance(op, ir.If)]
+    extracts = [op for op in operations if isinstance(op, ir.TensorExtract)]
+    assert len(conditionals) == len(extracts) == 2
+    assert all(op.condition.type is ir.ScalarType.BOOL for op in conditionals)
+    assert all(len(op.indices) == len(condition_shape) for op in extracts)
+    assert len(module.globals) == len({global_.name for global_ in module.globals}) == 3
+    x = body.blocks[0].arguments[1]
+    adds = [op for op in operations if isinstance(op, ir.Add)]
+    assert len(adds) == 3
+    assert all(op.lhs == x for op in adds)
+    assert len({op.rhs.id for op in adds}) == 3
+    lowered = niro.to_mlir(module)
+    lowered.verify()
+    text = niro.format_mlir(lowered)
+    assert text.count("scf.if") == 2
+    assert text.count("tensor.extract") == 2
+
+
 def onnx_tensor(
     name: str,
     shape: list[int],
@@ -267,6 +352,33 @@ def test_imports_matmul_and_transpose() -> None:
         shape=(2, 4),
     )
     assert return_.operands == (matmul_result,)
+
+
+def test_imports_initializer_returned_directly() -> None:
+    weight = helper.make_tensor("weight", TensorProto.FLOAT, [2], [2.0, 3.0])
+    graph = helper.make_graph(
+        nodes=[],
+        name="constant_output",
+        inputs=[],
+        outputs=[onnx_tensor("weight", [2])],
+        initializer=[weight],
+    )
+    model = helper.make_model(graph)
+    onnx.checker.check_model(model, full_check=True)
+
+    module = niro.from_onnx(model)
+
+    function = module.functions[0]
+    assert function.body is not None
+    (block,) = function.body.blocks
+    get_global, return_ = block.operations
+    assert isinstance(get_global, ir.GetGlobal)
+    assert isinstance(return_, ir.Return)
+    assert get_global.name == "weight"
+    assert get_global.result.type == ir.TensorType(ir.ScalarType.F32, (2,))
+    assert return_.operands == (get_global.result,)
+    assert function.input_names == ()
+    assert function.output_names == ("weight",)
 
 
 def test_preserves_node_and_graph_output_order() -> None:

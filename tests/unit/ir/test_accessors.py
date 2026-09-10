@@ -385,3 +385,29 @@ def test_iter_ops_preserves_depth_first_order_and_identity() -> None:
     )
     assert list(ir.iter_ops(ir.Region())) == []
     assert list(ir.iter_ops(ir.Region([ir.Block()]))) == []
+
+
+def test_branch_accessors_preserve_edge_and_operand_order() -> None:
+    flag = ir.Value(ir.ValueId(0), ir.ScalarType.BOOL)
+    x = ir.Value(ir.ValueId(1), ir.ScalarType.I32)
+    target = ir.Block()
+    jump = ir.Branch(target, (x,))
+    cond = ir.CondBranch(flag, target, target, (x, x), (x,))
+    target.operations = [jump]
+    body = ir.Region([ir.Block((flag, x), [cond]), target])
+    fn = ir.Function("f", ir.FunctionType((flag.type, x.type), ()), body)
+    assert ir.get_operands(jump) == (x,)
+    assert ir.get_operands(cond) == (flag, x, x, x)
+    assert ir.get_successors(cond) == (target, target)
+    assert ir.get_successors(jump) == (target,)
+    assert ir.get_successors(ir.Return()) == ()
+    for op in (jump, cond):
+        assert ir.get_results(op) == ()
+        assert ir.get_regions(op) == ()
+    assert list(ir.iter_ops(body)) == [cond, jump]
+    assert list(ir.iter_uses(fn, x.id)) == [
+        ir.Use(cond, 1),
+        ir.Use(cond, 2),
+        ir.Use(cond, 3),
+        ir.Use(jump, 0),
+    ]

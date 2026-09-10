@@ -1,0 +1,1 @@
+"""Properties of ONNX import."""

@@ -22,17 +22,25 @@ _ONNX_DOMAINS = (
 class Ctx:
     """Import context holding a graph and its initializer and value-type mappings."""
 
+    module: builder.ModuleBuilder
     graph: onnx.GraphProto
     weights: Mapping[OnnxValueName, ir.Global]
     types: Mapping[OnnxValueName, ir.Type]
 
 
 def from_onnx(onnx_model: onnx.ModelProto) -> VerifiedModule:
-    """Convert an ONNX model to verified Niro IR."""
+    """Convert an ONNX model to verified Niro IR.
+
+    Import If branches recursively, preserving captures and local initializers.
+    Conditions need a statically known single-element Boolean tensor; branches
+    must yield the declared result types. Unrecognized operations remain opaque
+    when their attributes are supported scalar values or flat sequences.
+    """
     graph = onnx_model.graph
     module = builder.ModuleBuilder()
     weights = _import_initializers(graph, module)
     ctx = Ctx(
+        module=module,
         graph=graph,
         weights=weights,
         types=_collect_types(graph),
@@ -50,8 +58,9 @@ def node_name(node: onnx.NodeProto) -> str:
 def _import_forward(ctx: Ctx, module: builder.ModuleBuilder) -> ir.Function:
     """Build and return the graph entry point, adding it to the module.
 
-    Resolve operands in graph order and load initializers on first use. Inputs
-    must be named and declared graph outputs must match the resulting types.
+    Resolve operands in graph order and load initializers on first use, including
+    those returned directly. Inputs must be named and declared graph outputs
+    must match the resulting types.
     """
     fn = _declare_entry_point(ctx.graph, module)
     input_names = fn.raw.input_names
@@ -67,32 +76,34 @@ def _import_forward(ctx: Ctx, module: builder.ModuleBuilder) -> ir.Function:
         (cast(str, name) for name in input_names),
         block.raw.arguments,
     )
-    for node in ctx.graph.node:
-        operands = []
-        for name in node.input:
-            assert name
-            if name in value_table:
-                pass
-            elif name in ctx.weights:
-                value = block.get_global(ctx.weights[name])
-                value_table.define(name, value)
-            else:
-                raise ValueError(
-                    f"could not resolve ONNX value {name!r} "
-                    f"used as an operand by node {node_name(node)!r}"
-                )
-            operands.append(value_table.lookup(name))
-
-        result = _import_node(ctx, block, node, operands)
-        results = (result,) if isinstance(result, ir.Value) else result
-        value_table.define_many(node.output, results)
-
-    outputs = [value_table.lookup(cast(str, name)) for name in output_names]
+    outputs = _import_graph(ctx, block, value_table)
     for output, ty in zip(outputs, fn.raw.type.outputs, strict=True):
         assert output.type == ty
-
     block.return_(*outputs)
     return fn.raw
+
+
+def _import_graph(
+    ctx: Ctx, block: builder.BlockBuilder, values: OnnxValueTable
+) -> tuple[ir.Value, ...]:
+    """Import nodes into a scope and resolve graph outputs for its terminator."""
+    for node in ctx.graph.node:
+        operands = [_resolve_value(ctx, block, values, name) for name in node.input]
+        result = _import_node(ctx, block, node, operands, values)
+        results = (result,) if isinstance(result, ir.Value) else result
+        values.define_many(node.output, results)
+    return tuple(
+        _resolve_value(ctx, block, values, output.name) for output in ctx.graph.output
+    )
+
+
+def _resolve_value(
+    ctx: Ctx, block: builder.BlockBuilder, values: OnnxValueTable, name: str
+) -> ir.Value:
+    """Resolve a visible value, loading an initializer into this scope on first use."""
+    if name not in values and name in ctx.weights:
+        values.define(name, block.get_global(ctx.weights[name]))
+    return values.lookup(name)
 
 
 def _declare_entry_point(
@@ -121,6 +132,7 @@ def _import_node(
     block: builder.BlockBuilder,
     node: onnx.NodeProto,
     operands: Sequence[ir.Value],
+    values: OnnxValueTable,
 ) -> ir.Value | Sequence[ir.Value]:
     """Append a supported or opaque ONNX operation and return its SSA results."""
     if node.domain not in _ONNX_DOMAINS:
@@ -136,10 +148,66 @@ def _import_node(
         case OnnxOpType.MatMul:
             lhs, rhs = operands
             return block.matmul(lhs, rhs)
+        case OnnxOpType.If:
+            return _import_if(ctx, block, node, operands, values)
         case OnnxOpType.Transpose:
             return _import_transpose(block, node, operands)
         case _:
             return _import_unknown_node(ctx, block, node, operands)
+
+
+def _import_if(
+    ctx: Ctx,
+    block: builder.BlockBuilder,
+    node: onnx.NodeProto,
+    operands: Sequence[ir.Value],
+    values: OnnxValueTable,
+) -> tuple[ir.Value, ...]:
+    """Import branches into isolated regions that capture the enclosing scope.
+
+    Conditions must be single-element Boolean tensors; extract their scalar
+    value before constructing If. Branch outputs must match the declared
+    result types, as required by Niro If. Branch-local initializers become globals
+    with unique names and are bound only within their branch.
+    """
+    (condition,) = operands
+    type_ = condition.type
+    if (
+        not isinstance(type_, ir.TensorType)
+        or type_.element_type is not ir.ScalarType.BOOL
+    ):
+        raise TypeError("ONNX If condition must be a Boolean tensor")
+    if type_.shape is None or any(dimension != 1 for dimension in type_.shape):
+        raise NotImplementedError(
+            "ONNX If condition must have a statically known single element"
+        )
+    indices = tuple(block.const(0, ir.ScalarType.I64) for _ in type_.shape)
+    condition = block.tensor_extract(condition, indices)
+    conditional = block.if_(condition, [ctx.types[name] for name in node.output])
+    attributes = {attribute.name: attribute for attribute in node.attribute}
+    for name, region in (
+        ("then_branch", conditional.then_region),
+        ("else_branch", conditional.else_region),
+    ):
+        attribute = attributes[name]
+        if attribute.type != onnx.AttributeProto.GRAPH:
+            raise ValueError(f"ONNX If {name!r} must be a graph")
+        graph = attribute.g
+        if graph.input:
+            raise NotImplementedError("ONNX If branches must have no explicit inputs")
+        local_weights = _import_initializers(graph, ctx.module)
+        branch_ctx = Ctx(
+            module=ctx.module,
+            graph=graph,
+            weights={**ctx.weights, **local_weights},
+            types={**ctx.types, **_collect_types(graph)},
+        )
+        branch = region.block()
+        branch_values = OnnxValueTable(parent=values)
+        for weight_name, weight in local_weights.items():
+            branch_values.define(weight_name, branch.get_global(weight))
+        branch.yield_(*_import_graph(branch_ctx, branch, branch_values))
+    return conditional.raw.results
 
 
 def _import_transpose(
@@ -188,12 +256,19 @@ def _import_initializers(
     graph: onnx.GraphProto,
     module: builder.ModuleBuilder,
 ) -> dict[OnnxValueName, ir.Global]:
-    """Add globals for graph initializers and return their ONNX-name mapping."""
+    """Add uniquely named globals and return their graph-local ONNX-name mapping."""
+    names = {symbol.name for symbol in (*module.raw.globals, *module.raw.functions)}
     sym_table: dict[OnnxValueName, ir.Global] = {}
     for t in graph.initializer:
         ty = _tensor_type(t)
         val = _tensor_data(t)
-        sym_table[t.name] = module.global_(t.name, ty, val)
+        name = t.name
+        suffix = 0
+        while name in names:
+            suffix += 1
+            name = f"{t.name}.{suffix}"
+        names.add(name)
+        sym_table[t.name] = module.global_(name, ty, val)
     return sym_table
 
 

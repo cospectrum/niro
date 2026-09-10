@@ -1,13 +1,29 @@
 # TODO
 
+## Niro IR pass candidates
+
+Scope: [xDSL] and stock [mlir-opt]; no equivalent passes identified yet.
+
+- [ ] Recover decomposed attention after adding native attention semantics and lowering.
+- [ ] Recover decomposed LayerNorm/RMSNorm after defining exact numerical semantics and lowering.
+- [ ] Deduplicate private immutable parameter globals by type and exact contents across composed models.
+
+## Niro interface tasks
+
+- [ ] Select requested outputs, update signatures/names, and run effect-aware cleanup.
+- [ ] Validate input contracts and pass guaranteed shapes/values to specialization.
+
+[xDSL]: https://github.com/xdslproject/xdsl/blob/main/xdsl/transforms/__init__.py
+[mlir-opt]: https://mlir.llvm.org/docs/Passes/
+
 ## ONNX operations
 
 This is a rough implementation order based on how often each operation is likely to
 appear in ONNX models. The percentages are estimates, not measured statistics, and
 will vary between model families.
 
-`Done` operations have native Niro equivalents. `Todo` operations are currently
-imported as `UnknownOp`.
+`Done` operations have native Niro equivalents within the supported type/shape
+subset. `Todo` operations use `UnknownOp` when their inputs and attributes are supported.
 
 | Estimated prevalence | Status | Operation |
 | ---: | :---: | --- |
@@ -98,7 +114,7 @@ imported as `UnknownOp`.
 | 3% | Todo | `CumSum` |
 | 3% | Todo | `GreaterOrEqual` |
 | 3% | Todo | `HardSwish` |
-| 3% | Todo | `If` |
+| 3% | Done | `If` |
 | 3% | Todo | `LessOrEqual` |
 | 3% | Todo | `LogSoftmax` |
 | 3% | Todo | `Loop` |

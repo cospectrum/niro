@@ -17,7 +17,9 @@ def test_ir_exports_operations() -> None:
 
     _ = (
         ir.Add,
+        ir.Branch,
         ir.Call,
+        ir.CondBranch,
         ir.Const,
         ir.If,
         ir.MatMul,
@@ -77,3 +79,14 @@ def test_exports_mlir_output() -> None:
 
     assert niro.format_mlir is mlir.format_mlir
     assert niro.write_mlir is mlir.write_mlir
+
+
+def test_pass_interface_accepts_a_verified_module_pass() -> None:
+    import niro
+    from niro import ir, passes, verify
+
+    pass_: passes.Pass = passes.noop
+    module = verify.module(ir.Module())
+    assert pass_(module) is module
+    assert niro.passes is passes
+    assert passes.__all__ == ["Pass", "noop"]

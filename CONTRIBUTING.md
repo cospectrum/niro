@@ -19,11 +19,11 @@ Test meaningful behavior and invariants. Unit tests mirror `src/` under
 `tests/unit/`; group end-to-end tests under `tests/e2e/` by interface or workflow.
 
 Property tests use Hypothesis under `tests/property/`, mirroring the source
-modules where useful. Like unit tests, name files after the source module,
-such as `optimizations/test_inlining.py`. Generate bounded,
-valid programs and check semantic preservation as well as IR validity and input
-immutability. Check idempotence when it is part of the pass behavior. CI runs
-unit tests, property tests, then end-to-end tests. The shared Hypothesis profile
+modules where useful. Like unit tests, name files after the source module.
+Generate bounded, valid programs and check semantic preservation as well as IR
+validity and input immutability. Check idempotence when it is part of the pass behavior. CI runs
+unit tests, property tests, then end-to-end tests, with property tests running only
+on Ubuntu. The shared Hypothesis profile
 runs 200 examples per test. Use `--hypothesis-show-statistics` to inspect runtime
 and generated-case events when tuning generators or the example budget. Prefer
 per-test `@hypothesis.settings(max_examples=...)` overrides when a test needs a
@@ -47,10 +47,13 @@ does so before returning.
   Use behavior-owning classes only for shared mutable state (builders, value
   allocators) or resource lifecycles; avoid inheritance and classes that merely
   group functions.
-- Name optimization modules by subject or transformation (`inlining.py`,
-  `transpose.py`) and pass functions by action (`inline_functions`,
-  `simplify_transposes`).
+- Prefer composition over flag-controlled behavior: use focused functions and
+  combine their results in the caller instead of selecting behaviors with flags.
+- Name pass modules by subject or transformation and pass functions by action.
 - Prefer guard clauses and early returns over nesting.
+- Place public functions and methods before private helpers where possible,
+  keeping private helpers near the bottom of their module or class. Likewise,
+  place tests near the top and test helpers near the bottom where possible.
 - Every function and type defined under `src/` must have a docstring, including
   private helpers, methods, classes, and type aliases. For functions, explain
   what they do and return, and any non-obvious assumptions or side effects.
@@ -84,6 +87,7 @@ does so before returning.
 Be concise, introduce concepts before using them, and update affected docs and
 examples when APIs or behavior change. Keep shared content consistent.
 
+- Keep `CONTRIBUTING.md` as short as possible while preserving essential guidance.
 - `README.md` and `docs/index.md`: minimal overview, installation, basic usage,
   and links. Keep shared content synchronized, allowing site-specific formatting
   and links. Update only when existing content needs changing; do not add

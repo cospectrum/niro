@@ -1,5 +1,12 @@
 import pytest
-from xdsl.dialects import builtin, ml_program
+from xdsl.context import Context
+from xdsl.dialects import arith, builtin, cf, func, ml_program, scf
+from xdsl.interpreter import Interpreter
+from xdsl.interpreters.arith import ArithFunctions
+from xdsl.interpreters.cf import CfFunctions
+from xdsl.interpreters.func import FuncFunctions
+from xdsl.interpreters.scf import ScfFunctions
+from xdsl.parser import Parser
 
 import niro
 from niro import builder, ir, verify
@@ -21,6 +28,26 @@ def test_lowers_tensor_add() -> None:
     assert "func.func @model" in text
     assert "%2 = arith.addf %0, %1 : tensor<2x2xf32>" in text
     assert "func.return %2 : tensor<2x2xf32>" in text
+
+
+@pytest.mark.parametrize("shape", [(), (2,), (2, 3)])
+def test_lowers_tensor_extract(shape: tuple[int, ...]) -> None:
+    tensor_type = ir.TensorType(ir.ScalarType.F32, shape)
+    module = builder.ModuleBuilder()
+    function = module.function(
+        name="extract",
+        type=ir.FunctionType((tensor_type,), (ir.ScalarType.F32, tensor_type)),
+    )
+    block = function.region().first_block()
+    (operand,) = block.raw.arguments
+    indices = tuple(block.const(0, ir.ScalarType.I64) for _ in shape)
+    result = block.tensor_extract(operand, indices)
+    block.return_(result, operand)
+
+    text = niro.format_mlir(niro.to_mlir(module.verify()))
+
+    assert "tensor.extract" in text
+    assert text.count("arith.index_cast") == len(shape)
 
 
 def test_lowers_tensor_weight_to_private_immutable_global() -> None:
@@ -111,7 +138,9 @@ def test_lowers_if_and_yield() -> None:
                             results=(result,),
                             condition=condition,
                             then_region=branch,
-                            else_region=branch,
+                            else_region=ir.Region(
+                                [ir.Block(operations=[ir.Yield((condition,))])]
+                            ),
                         ),
                         ir.Return(operands=(result,)),
                     ],
@@ -184,3 +213,82 @@ def test_rejects_dynamic_matmul() -> None:
         match="matmul requires a static ranked tensor",
     ):
         niro.to_mlir(module.verify())
+
+
+def test_lowers_nonreturning_function_cfg() -> None:
+    flag = ir.Value(ir.ValueId(0), ir.ScalarType.BOOL)
+    loop = ir.Block()
+    loop.operations = [ir.CondBranch(flag, loop, loop)]
+    body = ir.Region([ir.Block((flag,), [ir.Branch(loop)]), loop])
+    fn = ir.Function("f", ir.FunctionType((flag.type,), ()), body)
+    module = verify.module(ir.Module(functions=[fn]))
+    text = niro.format_mlir(niro.to_mlir(module))
+    assert "cf.br" in text and "cf.cond_br" in text
+    parse_mlir(text).verify()
+
+
+def parse_mlir(text: str) -> builtin.ModuleOp:
+    context = Context()
+    for dialect in (
+        builtin.Builtin,
+        arith.Arith,
+        cf.Cf,
+        func.Func,
+        scf.Scf,
+        ml_program.MLProgram,
+    ):
+        context.load_dialect(dialect)
+    return Parser(context, text).parse_module()
+
+
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("flag", [False, True])
+def test_builder_lowering_pipeline_preserves_loop_results(
+    nested: bool, flag: bool
+) -> None:
+    module = builder.ModuleBuilder()
+    signature = ir.FunctionType(
+        (ir.ScalarType.BOOL, ir.ScalarType.I32), (ir.ScalarType.I32,)
+    )
+    helper = module.function(name="helper", type=signature)
+    region = helper.region()
+    entry = region.first_block()
+    condition, x = entry.raw.arguments
+    start = entry
+    # Layout deliberately puts the exit and loop before the base's definition.
+    exit_ = region.block((x.type,))
+    loop = region.block((condition.type, x.type))
+    work = region.block()
+    start.branch(work)
+    base = work.add(x, x)
+    work.branch(loop, condition, x)
+    repeat, carried = loop.raw.arguments
+    total = loop.add(carried, base)
+    stop = loop.bool(False)
+    loop.cond_branch(repeat, loop, exit_, (stop, total), (total,))
+    exit_.return_(*exit_.raw.arguments)
+    caller = module.function(name="caller", type=signature).region().first_block()
+    if nested:
+        flag_value, operand = caller.raw.arguments
+        conditional = caller.if_(flag_value, (operand.type,))
+        then = conditional.then_region.block()
+        then.yield_(*then.call(helper, caller.raw.arguments))
+        conditional.else_region.block().yield_(operand)
+        caller.return_(*conditional.raw.results)
+    else:
+        caller.return_(*caller.call(helper, caller.raw.arguments))
+    original = module.verify()
+    expected = 7 if nested and not flag else (35 if flag else 21)
+    lowered = niro.to_mlir(original)
+    assert not any(isinstance(op, scf.ExecuteRegionOp) for op in lowered.walk())
+    parsed = parse_mlir(niro.format_mlir(lowered))
+    parsed.verify()
+    interpreter = Interpreter(parsed)
+    for implementations in (
+        ArithFunctions(),
+        CfFunctions(),
+        FuncFunctions(),
+        ScfFunctions(),
+    ):
+        interpreter.register_implementations(implementations)
+    assert interpreter.call_op("caller", (flag, 7)) == (expected,)

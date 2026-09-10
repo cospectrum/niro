@@ -305,3 +305,60 @@ def test_verify_checks_current_builder_contents() -> None:
 
     with pytest.raises(ValueError, match="must end with Return"):
         module.verify()
+
+
+def test_builds_function_cfg_containing_single_block_if() -> None:
+    module = builder.ModuleBuilder()
+    function = module.function(
+        name="choose",
+        type=ir.FunctionType(
+            (ir.ScalarType.BOOL, ir.ScalarType.I32), (ir.ScalarType.I32,)
+        ),
+    )
+    body = function.region()
+    entry = body.first_block()
+    flag, x = entry.raw.arguments
+    join = body.block((x.type,))
+    conditional = entry.if_(flag, (x.type,))
+    start = conditional.then_region.block()
+    start.yield_(x)
+    conditional.else_region.block().yield_(x)
+    entry.branch(join, *conditional.raw.results)
+    join.return_(*join.raw.arguments)
+    module.verify()
+    assert start.raw.operations == [ir.Yield((x,))]
+    assert entry.raw.operations[-1] == ir.Branch(join.raw, conditional.raw.results)
+    assert start.raw.arguments == ()
+
+
+def test_if_region_rejects_a_second_block() -> None:
+    entry = function_builder().region().first_block()
+    arm = entry.if_(entry.bool(True), (ir.ScalarType.I32,)).then_region
+    start = arm.block()
+    with pytest.raises(ValueError, match="already has a block"):
+        arm.block()
+    assert arm.raw.blocks == [start.raw]
+
+
+def test_if_builder_allows_zero_results_with_both_arms() -> None:
+    module = builder.ModuleBuilder()
+    entry = (
+        module.function(name="f", type=ir.FunctionType((), ())).region().first_block()
+    )
+    conditional = entry.if_(entry.bool(True))
+    conditional.then_region.block().yield_()
+    conditional.else_region.block().yield_()
+    entry.return_()
+    module.verify()
+    assert conditional.raw.results == ()
+
+
+def test_builder_branch_errors_are_reported_by_module_verification() -> None:
+    module = builder.ModuleBuilder()
+    region = module.function(name="f", type=ir.FunctionType((), ())).region()
+    entry = region.first_block()
+    target = region.block((ir.ScalarType.I32,))
+    entry.branch(target.raw)
+    target.return_()
+    with pytest.raises(TypeError, match="branch argument types"):
+        module.verify()
