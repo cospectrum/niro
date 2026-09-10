@@ -122,6 +122,8 @@ def _verify_region(
     """Validate entry inputs, CFG edges, dominance, and each block's contents."""
     if not region.blocks:
         raise ValueError("region must contain a block")
+    if terminator is ir.Yield and len(region.blocks) != 1:
+        raise ValueError("if regions must contain exactly one block")
     if tuple(value.type for value in region.blocks[0].arguments) != input_types:
         raise TypeError("region argument types do not match expected input types")
     dominators = _verify_cfg(region, terminator)

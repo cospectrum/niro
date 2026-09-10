@@ -1,4 +1,4 @@
-"""Properties of inlining on generated acyclic scalar programs."""
+"""Properties of inlining on scalar programs with acyclic calls and bounded loops."""
 
 import pickle
 from collections.abc import Sequence
@@ -219,12 +219,20 @@ def test_inline_functions_preserves_semantics(
     if limit == 0 or callees == frozenset():
         assert updated is module
     if limit is None:
-        assert not any(
-            isinstance(op, ir.Call) and (callees is None or op.callee in callees)
-            for function in updated.functions
-            if function.body is not None
-            for op in ir.iter_ops(function.body)
-        )
+        functions = {f.name: f for f in updated.functions}
+        for function in updated.functions:
+            assert function.body is not None
+            top_level = {
+                id(op) for block in function.body.blocks for op in block.operations
+            }
+            for op in ir.iter_ops(function.body):
+                if not isinstance(op, ir.Call) or (
+                    callees is not None and op.callee not in callees
+                ):
+                    continue
+                callee = functions[op.callee]
+                assert callee.body is not None
+                assert len(callee.body.blocks) > 1 and id(op) not in top_level
 
 
 @hypothesis.given(

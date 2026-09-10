@@ -547,7 +547,7 @@ def test_invalid_if_regions(scenario: str) -> None:
             message = "region must contain a block"
         case "multiple-blocks":
             then.blocks.append(ir.Block(operations=[ir.Yield((value,))]))
-            message = "region contains unreachable blocks"
+            message = "if regions must contain exactly one block"
         case "branch-arguments":
             then.blocks[0].arguments = (ir.Value(ir.ValueId(3), ir.ScalarType.I32),)
             error, message = TypeError, "region argument types"
@@ -710,27 +710,33 @@ def test_invalid_control_flow(scenario: str) -> None:
         verify.module(module)
 
 
-@pytest.mark.parametrize("escape", [False, True])
-def test_cfg_in_if_region_captures_dominating_values(escape: bool) -> None:
+@pytest.mark.parametrize("multiblock", [False, True])
+@pytest.mark.parametrize("arm", ["then", "else"])
+def test_if_captures_dominating_values_but_rejects_multiblock_arms(
+    multiblock: bool, arm: str
+) -> None:
     flag = ir.Value(ir.ValueId(0), ir.ScalarType.BOOL)
     x, doubled, result = (
         ir.Value(ir.ValueId(i), ir.ScalarType.I32) for i in range(1, 4)
     )
-    then_exit = ir.Block(operations=[ir.Yield((doubled,))])
-    then_entry = ir.Block(operations=[ir.Branch(then_exit)])
+    selected_exit = ir.Block(operations=[ir.Yield((doubled,))])
+    selected = ir.Region([selected_exit])
+    if multiblock:
+        selected.blocks.insert(0, ir.Block(operations=[ir.Branch(selected_exit)]))
+    other = ir.Region([ir.Block(operations=[ir.Yield((x,))])])
     nested = ir.If(
         (result,),
         flag,
-        ir.Region([then_entry, then_exit]),
-        ir.Region([ir.Block(operations=[ir.Yield((x,))])]),
+        selected if arm == "then" else other,
+        selected if arm == "else" else other,
     )
     exit_ = ir.Block(operations=[nested, ir.Return((result,))])
     entry = ir.Block((flag, x), [ir.Add(doubled, x, x), ir.Branch(exit_)])
-    if escape:
-        then_entry.operations = [ir.Branch(exit_)]
     module = _module_with_body([entry, exit_], (flag.type, x.type), (x.type,))
-    if escape:
-        with pytest.raises(ValueError, match="outside the current region"):
+    if multiblock:
+        with pytest.raises(
+            ValueError, match="if regions must contain exactly one block"
+        ):
             verify.module(module)
     else:
         assert verify.module(module) is module

@@ -165,7 +165,7 @@ def populate(
 
 
 def with_control_flow(draw: DrawFn, function: ir.Function) -> ir.Function:
-    """Insert bounded CFGs into single-block regions, preserving their computations.
+    """Insert a bounded function-body CFG, preserving single-block If regions.
 
     Loop conditions become false on the first backedge, so every generated
     program terminates whenever its original computations terminate.
@@ -178,7 +178,7 @@ def with_control_flow(draw: DrawFn, function: ir.Function) -> ir.Function:
 
     def transform(region: ir.Region) -> ir.Region:
         (source,) = region.blocks
-        operations = [rewrite.map_regions(op, transform) for op in source.operations]
+        operations = list(source.operations)
         kind = draw(st.sampled_from(["none", "split", "diamond", "loop", "exits"]))
         hypothesis.event(f"cfg={kind}")
         if kind == "none":

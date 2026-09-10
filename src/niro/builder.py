@@ -187,7 +187,7 @@ class FunctionRegionBuilder(Builder[Region]):
 
 
 class IfRegionBuilder(Builder[Region]):
-    """Builder for an If region with an argument-free entry and optional CFG.
+    """Builder for an If region containing a single argument-free block.
 
     Attributes:
         raw: The [`niro.ir.Region`][] under construction.
@@ -198,13 +198,11 @@ class IfRegionBuilder(Builder[Region]):
         self._ctx = ctx
         self.raw: Region = region
 
-    def block(self, arg_types: Sequence[Type] = ()) -> BlockBuilder:
-        """Append a block, requiring the first block to have no arguments."""
-        if not self.raw.blocks and arg_types:
-            raise ValueError("if region entry block cannot have arguments")
-        block = ir.Block(
-            arguments=tuple(self._ctx.new_value(type) for type in arg_types)
-        )
+    def block(self) -> BlockBuilder:
+        """Create the region's only block, without arguments."""
+        if self.raw.blocks:
+            raise ValueError("if region already has a block")
+        block = ir.Block()
         builder = BlockBuilder(self._ctx, block)
         self.raw.blocks.append(block)
         return builder
@@ -385,7 +383,11 @@ class BlockBuilder(Builder[Block]):
         condition: Value,
         result_types: Sequence[Type] = (),
     ) -> IfBuilder:
-        """Append a conditional and return its region builders."""
+        """Append a conditional and return both single-block region builders.
+
+        Each region must be completed with one argument-free block yielding
+        values of the result types, including an empty tuple for no results.
+        """
         then_region = IfRegionBuilder(self._ctx, ir.Region())
         else_region = IfRegionBuilder(self._ctx, ir.Region())
 

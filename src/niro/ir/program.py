@@ -40,6 +40,7 @@ class Region:
     requires nonempty regions with every block reachable from entry. Blocks
     have unique ownership; branches stay within their immediately owning region.
     Builders may hold empty regions while constructing a program.
+    If regions are restricted to one argument-free block ending in Yield.
     """
 
     blocks: list[Block] = field(default_factory=list)

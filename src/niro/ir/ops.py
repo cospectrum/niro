@@ -132,9 +132,9 @@ class Yield:
 class If:
     """Select one branch using a scalar boolean condition.
 
-    Each branch has an argument-free entry block and exits through
-    [`Yield`][niro.ir.Yield] with the result types. Branches may capture values
-    available before this operation.
+    Produce zero or more results. Both regions contain exactly one argument-free
+    block ending in [`Yield`][niro.ir.Yield] with the result types. Branches may
+    capture values available before this operation.
     """
 
     results: tuple[Value, ...]

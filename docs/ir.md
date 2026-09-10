@@ -183,8 +183,9 @@ Values created inside it can leave only through results of that operation.
 A region has one or more blocks. Its first block is the entry; every other
 block must be reachable from it through branches. Branches stay in their
 immediately containing region and cannot target its entry block. Blocks and
-regions each have a unique owner. Loops are allowed, including loops with no
-exit. Block order after entry does not determine execution order.
+regions each have a unique owner. Function bodies allow loops, including loops
+with no exit. Block order after entry does not determine execution order. Each `If`
+region is restricted to exactly one argument-free block ending in `Yield`.
 
 ### `Block`
 
@@ -398,9 +399,9 @@ yield_op = Yield(operands=(result,))
 
 ### `If`
 
-`If` selects one of two regions using a boolean condition. Each region has an
-argument-free entry block and may contain branches. Its exits use `Yield`, and
-those yielded values become the `If` results:
+`If` selects one of two single-block regions using a scalar boolean condition
+and produces zero or more results. Both regions are required. Each contains one
+argument-free block ending in `Yield`; its yielded values become the `If` results:
 
 ```python
 if_op = If(
@@ -412,7 +413,8 @@ if_op = If(
 ```
 
 Both regions must yield the same number and types of values as `If.results`.
-They may use values visible before the `If`, but their local values cannot be
+An empty result tuple still requires both regions and their `Yield` terminators.
+`Branch` and `CondBranch` are restricted to function bodies. The `If` regions may use values visible before the `If`, but their local values cannot be
 used outside directly.
 
 ### `UnknownOp`

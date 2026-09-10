@@ -307,7 +307,7 @@ def test_verify_checks_current_builder_contents() -> None:
         module.verify()
 
 
-def test_builds_function_and_nested_cfg_with_block_arguments() -> None:
+def test_builds_function_cfg_containing_single_block_if() -> None:
     module = builder.ModuleBuilder()
     function = module.function(
         name="choose",
@@ -321,26 +321,36 @@ def test_builds_function_and_nested_cfg_with_block_arguments() -> None:
     join = body.block((x.type,))
     conditional = entry.if_(flag, (x.type,))
     start = conditional.then_region.block()
-    nested_join = conditional.then_region.block((x.type,))
-    start.cond_branch(flag, nested_join, nested_join.raw, (x,), (x,))
-    nested_join.yield_(*nested_join.raw.arguments)
+    start.yield_(x)
     conditional.else_region.block().yield_(x)
     entry.branch(join, *conditional.raw.results)
     join.return_(*join.raw.arguments)
     module.verify()
-    assert isinstance(start.raw.operations[-1], ir.CondBranch)
+    assert start.raw.operations == [ir.Yield((x,))]
     assert entry.raw.operations[-1] == ir.Branch(join.raw, conditional.raw.results)
-    assert nested_join.raw.arguments[0].id != join.raw.arguments[0].id
+    assert start.raw.arguments == ()
 
 
-def test_if_entry_rejects_arguments_before_allocating_values() -> None:
+def test_if_region_rejects_a_second_block() -> None:
     entry = function_builder().region().first_block()
-    arm = entry.if_(entry.bool(True)).then_region
-    with pytest.raises(ValueError, match="entry block cannot have arguments"):
-        arm.block((ir.ScalarType.I32,))
-    assert arm.raw.blocks == []
+    arm = entry.if_(entry.bool(True), (ir.ScalarType.I32,)).then_region
     start = arm.block()
-    assert start.i32(1).id == 1
+    with pytest.raises(ValueError, match="already has a block"):
+        arm.block()
+    assert arm.raw.blocks == [start.raw]
+
+
+def test_if_builder_allows_zero_results_with_both_arms() -> None:
+    module = builder.ModuleBuilder()
+    entry = (
+        module.function(name="f", type=ir.FunctionType((), ())).region().first_block()
+    )
+    conditional = entry.if_(entry.bool(True))
+    conditional.then_region.block().yield_()
+    conditional.else_region.block().yield_()
+    entry.return_()
+    module.verify()
+    assert conditional.raw.results == ()
 
 
 def test_builder_branch_errors_are_reported_by_module_verification() -> None:

@@ -1,13 +1,7 @@
 import pytest
 from xdsl.context import Context
 from xdsl.dialects import arith, builtin, cf, func, ml_program, scf
-from xdsl.interpreter import (
-    Interpreter,
-    InterpreterFunctions,
-    PythonValues,
-    impl,
-    register_impls,
-)
+from xdsl.interpreter import Interpreter
 from xdsl.interpreters.arith import ArithFunctions
 from xdsl.interpreters.cf import CfFunctions
 from xdsl.interpreters.func import FuncFunctions
@@ -201,37 +195,15 @@ def test_rejects_dynamic_matmul() -> None:
         niro.to_mlir(module.verify())
 
 
-@pytest.mark.parametrize("nested", [False, True])
-def test_lowers_nonreturning_cfg_in_function_or_if(nested: bool) -> None:
+def test_lowers_nonreturning_function_cfg() -> None:
     flag = ir.Value(ir.ValueId(0), ir.ScalarType.BOOL)
     loop = ir.Block()
     loop.operations = [ir.CondBranch(flag, loop, loop)]
-    body = ir.Region([ir.Block(operations=[ir.Branch(loop)]), loop])
-    if nested:
-        body = ir.Region(
-            [
-                ir.Block(
-                    (flag,),
-                    [
-                        ir.If(
-                            (),
-                            flag,
-                            body,
-                            ir.Region([ir.Block(operations=[ir.Yield()])]),
-                        ),
-                        ir.Return(),
-                    ],
-                )
-            ]
-        )
-    else:
-        body.blocks[0].arguments = (flag,)
+    body = ir.Region([ir.Block((flag,), [ir.Branch(loop)]), loop])
     fn = ir.Function("f", ir.FunctionType((flag.type,), ()), body)
     module = verify.module(ir.Module(functions=[fn]))
-    lowered = niro.to_mlir(module)
-    text = niro.format_mlir(lowered)
+    text = niro.format_mlir(niro.to_mlir(module))
     assert "cf.br" in text and "cf.cond_br" in text
-    assert ("scf.execute_region" in text) is nested
     parse_mlir(text).verify()
 
 
@@ -249,17 +221,6 @@ def parse_mlir(text: str) -> builtin.ModuleOp:
     return Parser(context, text).parse_module()
 
 
-@register_impls
-class ExecuteRegionFunctions(InterpreterFunctions):
-    """Supply the execute-region interpretation missing from xDSL's SCF interpreter."""
-
-    @impl(scf.ExecuteRegionOp)
-    def run_execute(
-        self, interpreter: Interpreter, op: scf.ExecuteRegionOp, args: PythonValues
-    ) -> PythonValues:
-        return interpreter.run_ssacfg_region(op.region, ())
-
-
 @pytest.mark.parametrize("nested", [False, True])
 @pytest.mark.parametrize("flag", [False, True])
 def test_builder_optimizer_lowering_pipeline_preserves_loop_results(
@@ -275,14 +236,7 @@ def test_builder_optimizer_lowering_pipeline_preserves_loop_results(
     region = helper.region()
     entry = region.first_block()
     condition, x = entry.raw.arguments
-    if nested:
-        conditional = entry.if_(condition, (x.type,))
-        conditional.else_region.block().yield_(x)
-        entry.return_(*conditional.raw.results)
-        region = conditional.then_region
-        start = region.block()
-    else:
-        start = entry
+    start = entry
     # Layout deliberately puts the exit and loop before the base's definition.
     exit_ = region.block((x.type,))
     loop = region.block((condition.type, x.type))
@@ -294,17 +248,23 @@ def test_builder_optimizer_lowering_pipeline_preserves_loop_results(
     total = loop.add(carried, base)
     stop = loop.bool(False)
     loop.cond_branch(repeat, loop, exit_, (stop, total), (total,))
-    if nested:
-        exit_.yield_(*exit_.raw.arguments)
-    else:
-        exit_.return_(*exit_.raw.arguments)
+    exit_.return_(*exit_.raw.arguments)
     caller = module.function(name="caller", type=signature).region().first_block()
-    caller.return_(*caller.call(helper, caller.raw.arguments))
+    if nested:
+        flag_value, operand = caller.raw.arguments
+        conditional = caller.if_(flag_value, (operand.type,))
+        then = conditional.then_region.block()
+        then.yield_(*then.call(helper, caller.raw.arguments))
+        conditional.else_region.block().yield_(operand)
+        caller.return_(*conditional.raw.results)
+    else:
+        caller.return_(*caller.call(helper, caller.raw.arguments))
     original = module.verify()
     optimized = optimizations.inline_functions(original)
     expected = 7 if nested and not flag else (35 if flag else 21)
     for source in (original, optimized):
         lowered = niro.to_mlir(source)
+        assert not any(isinstance(op, scf.ExecuteRegionOp) for op in lowered.walk())
         parsed = parse_mlir(niro.format_mlir(lowered))
         parsed.verify()
         interpreter = Interpreter(parsed)
@@ -313,36 +273,6 @@ def test_builder_optimizer_lowering_pipeline_preserves_loop_results(
             CfFunctions(),
             FuncFunctions(),
             ScfFunctions(),
-            ExecuteRegionFunctions(),
         ):
             interpreter.register_implementations(implementations)
         assert interpreter.call_op("caller", (flag, 7)) == (expected,)
-
-
-def test_zero_result_execute_region_preserves_yields_in_text() -> None:
-    module = builder.ModuleBuilder()
-    entry = (
-        module.function(name="f", type=ir.FunctionType((ir.ScalarType.BOOL,), ()))
-        .region()
-        .first_block()
-    )
-    (flag,) = entry.raw.arguments
-    conditional = entry.if_(flag)
-    start = conditional.then_region.block()
-    left = conditional.then_region.block()
-    right = conditional.then_region.block()
-    start.cond_branch(flag, left, right)
-    left.yield_()
-    right.yield_()
-    conditional.else_region.block().yield_()
-    entry.return_()
-    lowered = niro.to_mlir(module.verify())
-    text = niro.format_mlir(lowered)
-    parsed = parse_mlir(text)
-    parsed.verify()
-    execute = next(op for op in parsed.walk() if isinstance(op, scf.ExecuteRegionOp))
-    assert [type(block.last_op) for block in execute.region.blocks] == [
-        cf.ConditionalBranchOp,
-        scf.YieldOp,
-        scf.YieldOp,
-    ]

@@ -699,43 +699,38 @@ def test_cfg_inlining_preserves_loop_calls_multiple_returns_and_effects(
     carried, repeat = value(2), value(3, ir.ScalarType.BOOL)
     results = tuple(value(4 + i) for i in range(arity))
     stop = value(6, ir.ScalarType.BOOL)
-    exit_ = ir.Block(operations=[ir.Yield(results) if nested else ir.Return(results)])
-    loop = ir.Block(
-        (carried, repeat),
-        [ir.Call("helper", (carried, repeat), results), ir.Const(stop, False)],
-    )
+    exit_ = ir.Block(operations=[ir.Return(results)])
+    loop = ir.Block((carried, repeat))
+    if nested:
+        local_results = tuple(value(10 + i) for i in range(arity))
+        if_results = results or (value(4),)
+        conditional = ir.If(
+            if_results,
+            repeat,
+            region(
+                ir.Call("helper", (carried, repeat), local_results),
+                ir.Yield(local_results or (carried,)),
+            ),
+            region(ir.Yield((carried,) * len(if_results))),
+        )
+        loop.operations = [conditional, ir.Const(stop, False)]
+    else:
+        loop.operations = [
+            ir.Call("helper", (carried, repeat), results),
+            ir.Const(stop, False),
+        ]
     loop.operations.append(
         ir.CondBranch(
             repeat, loop, exit_, (results[0] if results else carried, stop), ()
         )
     )
-    start = ir.Block(operations=[ir.Branch(loop, (x, condition))])
+    start = ir.Block((x, condition), [ir.Branch(loop, (x, condition))])
     body = ir.Region([start, exit_, loop])
-    if nested:
-        outer_results = tuple(value(7 + i) for i in range(arity))
-        body = ir.Region(
-            [
-                ir.Block(
-                    (x, condition),
-                    [
-                        ir.If(
-                            outer_results,
-                            condition,
-                            body,
-                            ir.Region([ir.Block(operations=[ir.Yield((x,) * arity)])]),
-                        ),
-                        ir.Return(outer_results),
-                    ],
-                )
-            ]
-        )
-    else:
-        start.arguments = (x, condition)
     caller = ir.Function("caller", helper.type, body)
     original = verify.module(ir.Module(functions=[caller, helper]))
     snapshot = pickle.dumps(original)
     updated = optimizations.inline_functions(original)
-    assert calls(named(updated, "caller")) == []
+    assert len(calls(named(updated, "caller"))) == int(nested)
     assert evaluate(updated, "caller", (7, flag)) == evaluate(
         original, "caller", (7, flag)
     )
@@ -744,7 +739,7 @@ def test_cfg_inlining_preserves_loop_calls_multiple_returns_and_effects(
 
 
 @pytest.mark.parametrize("nested", [False, True])
-def test_inlines_nonreturning_cfg_and_removes_unreachable_continuation(
+def test_nonreturning_cfg_inlining_respects_region_boundaries(
     nested: bool,
 ) -> None:
     forever = ir.Block()
@@ -776,18 +771,17 @@ def test_inlines_nonreturning_cfg_and_removes_unreachable_continuation(
                         ir.If(
                             (result,),
                             condition,
-                            body,
-                            ir.Region([ir.Block(operations=[ir.Yield((captured,))])]),
+                            region(
+                                ir.Call("forever", (), (value(3),)),
+                                ir.Yield((value(3),)),
+                            ),
+                            region(ir.Yield((captured,))),
                         ),
                         ir.Return((result,)),
                     ],
                 )
             ]
         )
-        # Nested call and outer If must define distinct IDs.
-        start.operations[0] = ir.Call("forever", (), (value(3),))
-        start.operations[1] = ir.UnknownOp("unreachable", (value(3),), ())
-        exit_.operations = [ir.Yield((value(3),))]
     caller = ir.Function(
         "caller",
         ir.FunctionType(
@@ -800,9 +794,11 @@ def test_inlines_nonreturning_cfg_and_removes_unreachable_continuation(
     updated = optimizations.inline_functions(original)
     optimized = named(updated, "caller")
     assert optimized.body is not None
-    assert not any(
-        isinstance(op, (ir.Call, ir.UnknownOp)) for op in ir.iter_ops(optimized.body)
-    )
+    assert len(calls(optimized)) == int(nested)
+    assert not any(isinstance(op, ir.UnknownOp) for op in ir.iter_ops(optimized.body))
+    if nested:
+        assert updated is original
+        assert evaluate(updated, "caller", (False, 9)) == ((9,), [])
     assert pickle.dumps(original) == snapshot
     assert optimizations.inline_functions(updated) is updated
 

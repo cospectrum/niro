@@ -704,25 +704,23 @@ def test_cfg_rewrites_remap_forward_edges_and_backedges_without_mutation(
     assert pickle.dumps(fn) == snapshot
 
 
-def test_clone_remaps_nested_cfg_and_its_captures() -> None:
-    flag, local_flag = value(0, ir.ScalarType.BOOL), value(1, ir.ScalarType.BOOL)
-    target = ir.Block(operations=[ir.Yield()])
-    start = ir.Block(operations=[ir.CondBranch(local_flag, target, target)])
+def test_clone_remaps_cfg_containing_if_and_its_captures() -> None:
+    flag, local_flag, result = (value(i, ir.ScalarType.BOOL) for i in range(3))
     nested = ir.If(
-        (),
-        flag,
-        ir.Region([start, target]),
-        ir.Region([ir.Block(operations=[ir.Yield()])]),
+        (result,),
+        local_flag,
+        ir.Region([ir.Block(operations=[ir.Yield((flag,))])]),
+        ir.Region([ir.Block(operations=[ir.Yield((local_flag,))])]),
     )
+    target = ir.Block(operations=[nested, ir.Return((result,))])
     body = ir.Region(
-        [ir.Block((flag,), [ir.Const(local_flag, True), nested, ir.Return()])]
+        [ir.Block((flag,), [ir.Const(local_flag, True), ir.Branch(target)]), target]
     )
     copied, renamed = rewrite.clone_region(body, ir.ValueSupply(10))
-    cloned = copied.blocks[0].operations[1]
+    cloned = copied.blocks[1].operations[0]
     assert isinstance(cloned, ir.If)
-    branch = cloned.then_region.blocks[0].operations[0]
-    assert isinstance(branch, ir.CondBranch)
-    assert branch.condition == renamed[local_flag.id]
-    assert ir.get_successors(branch) == (cloned.then_region.blocks[1],) * 2
-    fn = ir.Function("f", ir.FunctionType((flag.type,), ()), copied)
+    assert cloned.condition == renamed[local_flag.id]
+    assert cloned.then_region.blocks[0].operations == [ir.Yield((renamed[flag.id],))]
+    assert ir.get_successors(copied.blocks[0].operations[-1]) == (copied.blocks[1],)
+    fn = ir.Function("f", ir.FunctionType((flag.type,), (result.type,)), copied)
     check(fn)

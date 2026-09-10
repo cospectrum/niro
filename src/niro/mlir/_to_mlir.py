@@ -24,8 +24,8 @@ ValueTable = dict[ir.ValueId, SSAValue]
 def to_mlir(niro_module: VerifiedModule) -> builtin.ModuleOp:
     """Convert verified Niro IR to a verified, high-level MLIR module.
 
-    Lower branches to the CF dialect. Multiblock If arms use scf.execute_region
-    inside scf.if, preserving their control flow and yielded results.
+    Lower function-body branches to the CF dialect and single-block If arms
+    directly to scf.if.
     Raise NotImplementedError for unknown operations.
     """
     lowered_functions = [
@@ -61,7 +61,7 @@ def _lower_function(
         result.attributes.update(_lower_attributes(function.attributes))
         return (), result
     generated_globals: list[Operation] = []
-    body = _emit_cfg(function.body, {}, generated_globals, function.name)
+    body = _emit_region(function.body, {}, generated_globals, function.name)
     result = func.FuncOp(function.name, (inputs, outputs), body)
     result.attributes.update(_lower_attributes(function.attributes))
     return tuple(generated_globals), result
@@ -172,14 +172,12 @@ def _emit_operation(
                 [_lower_type(value.type) for value in operation.results],
                 _emit_region(
                     operation.then_region,
-                    operation.results,
                     values,
                     generated_globals,
                     function_name,
                 ),
                 _emit_region(
                     operation.else_region,
-                    operation.results,
                     values,
                     generated_globals,
                     function_name,
@@ -195,7 +193,7 @@ def _emit_operation(
             assert_never(unreachable)
 
 
-def _emit_cfg(
+def _emit_region(
     region: ir.Region,
     visible_values: ValueTable,
     generated_globals: list[Operation],
@@ -239,25 +237,6 @@ def _emit_cfg(
             blocks,
         )
     return Region(list(blocks.values()))
-
-
-def _emit_region(
-    region: ir.Region,
-    results: tuple[ir.Value, ...],
-    visible_values: ValueTable,
-    generated_globals: list[Operation],
-    function_name: str,
-) -> Region:
-    """Lower an If arm, wrapping multiblock CFGs in scf.execute_region.
-
-    scf.if requires single-block arms. An execute region preserves arbitrary
-    internal branches and yields its results to the enclosing arm.
-    """
-    lowered = _emit_cfg(region, visible_values, generated_globals, function_name)
-    if len(region.blocks) == 1:
-        return lowered
-    execute = scf.ExecuteRegionOp([_lower_type(v.type) for v in results], lowered)
-    return Region(Block([execute, scf.YieldOp(*execute.results)]))
 
 
 def _emit_const(

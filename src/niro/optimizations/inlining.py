@@ -28,6 +28,9 @@ def inline_functions(
     direct or indirect call cycles are excluded as callees. Calls to eligible
     helpers inside recursive functions can still be inlined.
 
+    Inside If regions, retain calls to multiblock callees to preserve the
+    single-block region invariant. Single-block callees can be inlined anywhere.
+
     Selection applies to call targets throughout the module, including inside
     unselected callers. Calls to unselected functions remain calls when a
     selected callee's body is copied. Selection does not override recursion,
@@ -221,10 +224,20 @@ def _inline_calls(
     supply = rewrite.value_supply(function)
     while True:
         assert function.body is not None
+        top_level_calls = {
+            id(op)
+            for block in function.body.blocks
+            for op in block.operations
+            if isinstance(op, ir.Call)
+        }
         for op in ir.iter_ops(function.body):
             if not isinstance(op, ir.Call) or op.callee not in callees:
                 continue
-            function = _inline_call(function, op, callees[op.callee], supply)
+            callee = callees[op.callee]
+            assert callee.body is not None
+            if len(callee.body.blocks) != 1 and id(op) not in top_level_calls:
+                continue
+            function = _inline_call(function, op, callee, supply)
             # Edits invalidate references; resume traversal on the new function.
             break
         else:
@@ -271,27 +284,21 @@ def _inline_cfg_call(
     body: ir.Region,
     supply: ir.ValueSupply,
 ) -> ir.Function:
-    """Clone a multiblock callee and splice it into the call's immediate region."""
+    """Clone a multiblock callee into a call site in the function body."""
     cloned, _ = rewrite.clone_region(body, supply)
-
-    def transform(region: ir.Region) -> ir.Region:
-        """Find the call's region, preserving enclosing regions and their edges."""
-        for block in region.blocks:
-            for position, op in enumerate(block.operations):
-                if op is call:
-                    return _splice_cfg(region, block, position, call, cloned)
-        return rewrite.map_blocks(
-            region,
-            lambda block: dataclasses.replace(
-                block,
-                operations=[
-                    rewrite.map_regions(op, transform) for op in block.operations
-                ],
-            ),
-        )
-
+    point = rewrite.before(function, call)
     assert function.body is not None
-    return dataclasses.replace(function, body=transform(function.body))
+    assert point.block in function.body.blocks
+    return dataclasses.replace(
+        function,
+        body=_splice_cfg(
+            function.body,
+            point.block,
+            point.index,
+            call,
+            cloned,
+        ),
+    )
 
 
 def _splice_cfg(
