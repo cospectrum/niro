@@ -10,6 +10,10 @@ from niro import ir, verify
 
 from ..strategies import ir as ir_strategies
 
+VERIFIER_BOUNDS = ir_strategies.Bounds(
+    max_steps=24, max_blocks=8, max_depth=4, max_arity=6
+)
+
 
 def assert_verified_without_mutation(module: ir.Module) -> None:
     # Pickle preserves CFG cycles and NaNs, which defeat deepcopy/equality checks.
@@ -20,7 +24,9 @@ def assert_verified_without_mutation(module: ir.Module) -> None:
     assert pickle.dumps(module) == before
 
 
-@hypothesis.given(ir_strategies.modules())
+@hypothesis.given(
+    ir_strategies.modules(max_functions=6, max_globals=6, bounds=VERIFIER_BOUNDS)
+)
 def test_generated_modules_verify(module: ir.Module) -> None:
     assert_verified_without_mutation(module)
     hypothesis.event(f"functions={len(module.functions)}")
@@ -39,7 +45,9 @@ def test_generated_modules_verify(module: ir.Module) -> None:
 def test_generated_standalone_functions_verify(
     external: bool, data: st.DataObject
 ) -> None:
-    function = data.draw(ir_strategies.functions(external=external))
+    function = data.draw(
+        ir_strategies.functions(external=external, bounds=VERIFIER_BOUNDS)
+    )
     assert_verified_without_mutation(ir.Module(functions=[function]))
     if function.body is not None:
         hypothesis.event(f"blocks={len(function.body.blocks)}")
