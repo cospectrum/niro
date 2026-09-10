@@ -21,6 +21,7 @@ nav:
               - ops: niro/ir/ops.md
               - data: niro/ir/data.md
           - builder: niro/builder.md
+          - rewrite: niro/rewrite.md
           - verify: niro/verify.md
           - onnx: niro/onnx.md
           - mlir: niro/mlir.md

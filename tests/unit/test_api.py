@@ -5,6 +5,13 @@ def test_exports_ir() -> None:
     assert niro.ir is ir
 
 
+def test_exports_rewrite() -> None:
+    import niro
+    from niro import rewrite
+
+    assert niro.rewrite is rewrite
+
+
 def test_ir_exports_operations() -> None:
     from niro import ir
 

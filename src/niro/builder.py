@@ -80,12 +80,10 @@ class FunctionCtx(ModuleCtx):
     def __init__(self, module: Module, function: Function) -> None:
         super().__init__(module)
         self.function = function
-        self._next_value_id = 0
+        self._values = ir.ValueSupply()
 
     def new_value(self, type: Type) -> Value:
-        value = ir.Value(ir.ValueId(self._next_value_id), type)
-        self._next_value_id += 1
-        return value
+        return self._values.fresh(type)
 
 
 class ModuleBuilder(Builder[Module]):

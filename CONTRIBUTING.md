@@ -1,132 +1,86 @@
 # Contributing to Niro
 
-Niro is an early-stage project. Its design is still evolving, so discuss large
-changes before investing substantial work in them. See [todo.md](todo.md) for
-the current roadmap and potential work.
+Niro's design is evolving. Discuss large changes before investing substantial
+work; see [todo.md](todo.md) for the roadmap.
 
-## Development setup
+## Development
 
-Install the locked development environment with [uv]:
+| Task | Command |
+| --- | --- |
+| Install locked dependencies with [uv] | `uv sync --locked` |
+| Unit and integration tests | `uv run pytest tests/unit` |
+| End-to-end tests | `uv run pytest tests/e2e` |
+| Full local CI | `nix run .#ci` |
+| Preview docs while editing | `uv run zensical serve` |
+| Build docs | `uv run zensical build --clean` |
 
-```sh
-uv sync --locked
-```
+Test meaningful behavior and invariants. Unit tests mirror `src/` under
+`tests/unit/`; group end-to-end tests under `tests/e2e/` by interface or workflow.
 
+## Code
 
-## Testing
-
-Run the unit and integration tests during development:
-
-```sh
-uv run pytest tests/unit
-```
-
-Run the end-to-end tests:
-
-```sh
-uv run pytest tests/e2e
-```
-
-You can run the complete local CI workflow before submitting a change:
-
-```sh
-nix run .#ci
-```
-
-Unit tests mirror the source tree under `tests/unit/`. End-to-end tests live under
-`tests/e2e/`, grouped by the interface or workflow they exercise.
-Test meaningful behavior and invariants.
+- Keep designs small, clear, and correct. Avoid premature optimization;
+  optimize measured bottlenecks later.
+- Model Niro IR semantics precisely and independently of frontends and backends.
+  Keep it high-level and functionalized: tensor updates produce new SSA values.
+  Defer memory writes, bufferization, and in-place operations to later lowering
+  passes, such as MLIR passes.
+- Prefer functions, immutable dataclasses, and transformations returning new IR.
+  Use behavior-owning classes only for shared mutable state (builders, value
+  allocators) or resource lifecycles; avoid inheritance and classes that merely
+  group functions.
+- Prefer guard clauses and early returns over nesting.
+- Type-hint all Python code. Trust annotations; reserve runtime type checks for
+  external inputs and narrowing unions. Derive redundant information instead
+  of storing it.
+- Use `Mapping[K, V]` for read-only inputs; use `dict[K, V]` when mutation or a
+  concrete dictionary is required.
+- Establish invariants during construction. Use `assert` for internal
+  preconditions, postconditions, and invariants whose violation indicates a bug;
+  fail fast rather than recover. Use explicit exceptions for invalid external
+  inputs and expected runtime failures. Keep assertions free of side effects.
+- In implementation code and private annotations, prefer short module namespaces
+  for Niro symbols (`ir.Op`, `verify.module`, `rewrite.erase_ops`) over importing
+  individual names. Keep enough qualification to avoid ambiguity, e.g. `niro.onnx`
+  to distinguish it from the `onnx` dependency.
+- In public annotations, reference Niro types by directly imported names (`Op`)
+  or full paths (`niro.ir.ops.Op`), not short aliases (`ir.Op`), so documentation
+  links resolve. This linking requirement does not apply to dependency types.
+- For standard-library and third-party imports, prefer module-qualified names
+  in executable code (`collections.Counter`) and directly imported types in
+  annotations (`Iterator`, `Mapping`).
 
 ## Documentation
 
-Keep documentation concise and introduce concepts before relying on them.
-When public APIs or behavior change, update affected documentation and examples,
-including `README.md` and `docs/index.md`. Keep shared content consistent.
+Be concise, introduce concepts before using them, and update affected docs and
+examples when APIs or behavior change. Keep shared content consistent.
 
-Keep [docs/ir.md](docs/ir.md) language agnostic: it defines the IR's concepts,
-structure, semantics, and validity rules. Do not add implementation details such
-as Python dataclasses, inheritance, runtime validation mechanisms, or accessor
-APIs. Document the Python API, including explanations and examples, in source
-docstrings. Keep pages under `docs/niro/` limited to API reference directives and
-their rendering options; do not add handwritten prose or examples there.
+- `README.md` and `docs/index.md`: minimal overview, installation, basic usage,
+  and links. Keep shared content synchronized, allowing site-specific formatting
+  and links. Update only when existing content needs changing; do not add
+  announcements or descriptions of new modules, APIs, or features.
+- [docs/ir.md](docs/ir.md): language-agnostic IR concepts, structure, semantics,
+  and validity. No implementation details: dataclasses, inheritance, runtime
+  validation mechanisms, or accessor APIs.
+- Python docstrings: API explanations and examples in
+  [Google style][google-docstrings], with cross-references to objects and modules.
+- `docs/niro/`: API reference directives and rendering options only; no handwritten
+  prose or examples. Use `filters: public` or exclude private/internal names.
+  Avoid explicit `members` lists so new public members appear automatically.
 
-Preview the documentation with Zensical while editing it:
-
-```sh
-uv run zensical serve
-```
-
-Build it with Zensical:
-
-```sh
-uv run zensical build --clean
-```
-
-Write Python docstrings in [Google style][google-docstrings]. Use cross-references
-for Python objects and modules so generated API references are clickable.
-
-In public API annotations, use directly imported types (`Op` from
-`niro.ir.ops`) or fully qualified paths (`niro.ir.ops.Op`) so generated type
-links resolve. Avoid module aliases such as `ir.Op` in these annotations.
-
-When referencing Niro IR objects in internal code, prefer `ir.*`, including
-function bodies and private annotations. For standard-library and third-party
-imports, prefer module-qualified names in executable code, such as
-`collections.Counter`, and directly imported types in annotations, such as
-`Iterator` and `Mapping`.
-
-Generate API reference pages from public members using `filters: public` or
-filters that exclude private and internal names. Try not to enumerate `members`
-explicitly in documentation directives; new public API members should appear
-automatically.
+Document new features on their relevant pages. Preview and build docs using the
+commands above.
 
 ## Example models
 
-Model generators are grouped by format under `scripts/`. They write a
-serialized model to stdout so it can be saved to a file or piped directly into
-Niro.
-
-Inspect the signature of the example ONNX linear model:
+Group generators by format under `scripts/`. Write serialized models to stdout
+so they can be saved or piped into Niro:
 
 ```sh
-uv run scripts/onnx/generate_linear.py \
-  | uv run niro inspect signature --input-format onnx
-```
-
-Emit MLIR from it:
-
-```sh
-uv run scripts/onnx/generate_linear.py \
-  | uv run niro emit mlir --input-format onnx
-```
-
-Or save it for repeated use:
-
-```sh
+uv run scripts/onnx/generate_linear.py | uv run niro inspect signature --input-format onnx
+uv run scripts/onnx/generate_linear.py | uv run niro emit mlir --input-format onnx
 uv run scripts/onnx/generate_linear.py > linear.onnx
 ```
-
-## Style guide
-
-We want the project to remain small, direct, and easy to understand without
-compromising correctness or output quality. When contributing:
-
-- Prefer compact, straightforward design that models the required semantics
-  precisely, and keep the core IR independent of any single frontend or backend.
-- Prefer functional programming over OOP. Default to plain data and standalone
-  functions. Use dataclasses to represent
-  data. Introduce behavior-owning classes only when they simplify shared mutable
-  state or resource lifecycles; avoid inheritance and classes that merely group
-  functions.
-- Prefer early returns and guard clauses over nested conditionals.
-- Trust type annotations. Avoid defensive `isinstance` checks in typed code;
-  reserve runtime type checks for external inputs or narrowing union variants.
-- Use type hints throughout Python code and derive redundant information rather
-  than storing it.
-- Annotate read-only mapping inputs as `Mapping[K, V]`; use `dict[K, V]` when
-  mutation or a concrete dictionary is required.
-- Establish invariants at construction time, use assertions to check internal
-  invariants.
 
 [uv]: https://docs.astral.sh/uv/
 [google-docstrings]: https://google.github.io/styleguide/pyguide.html#38-comments-and-docstrings

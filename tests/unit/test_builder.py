@@ -61,6 +61,29 @@ def test_nested_region_block_has_no_function_arguments() -> None:
     assert else_block.raw.arguments == ()
 
 
+def test_value_supply_is_shared_across_regions_but_not_functions() -> None:
+    module = builder.ModuleBuilder()
+    function = module.function(
+        name="f", type=ir.FunctionType((ir.ScalarType.BOOL,), (ir.ScalarType.I32,))
+    )
+    block = function.region().first_block()
+    conditional = block.if_(block.raw.arguments[0], (ir.ScalarType.I32,))
+    then_block = conditional.then_region.block()
+    then_block.yield_(then_block.i32(1))
+    else_block = conditional.else_region.block()
+    else_block.yield_(else_block.i32(2))
+    block.return_(conditional.raw.results[0])
+    assert function.raw.body is not None
+    ids = [value.id for value in ir.iter_defined_values(function.raw.body)]
+    assert ids == [0, 1, 2, 3]
+
+    other = module.function(name="g", type=ir.FunctionType((), ()))
+    other_block = other.region().first_block()
+    assert other_block.i32(3).id == 0
+    other_block.return_()
+    module.verify()
+
+
 def test_appends_operation_after_terminator() -> None:
     block = function_builder().region().block()
     block.return_()
