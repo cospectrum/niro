@@ -38,8 +38,8 @@ Examples:
     function = ir.Function(
         "identity", ir.FunctionType((tensor,), (tensor,)), ir.Region([block])
     )
-    optimized = rewrite.replace_ops(
-        function, (transpose,), (), replacements={y.id: x}
+    optimized = rewrite.replace_op(
+        function, transpose, (), replacements={y.id: x}
     )
     assert optimized.first_block.operations == [ir.Return((x,))]
     assert len(block.operations) == 2
@@ -60,12 +60,15 @@ from niro.ir import Block, Function, Op, Region, Use, Value, ValueId, ValueSuppl
 
 __all__ = [
     "InsertPoint",
+    "after",
+    "before",
     "clone_region",
     "erase_ops",
     "insert_ops",
     "map_blocks",
     "map_regions",
     "move_ops",
+    "replace_op",
     "replace_ops",
     "replace_uses",
     "value_supply",
@@ -88,6 +91,88 @@ class InsertPoint:
     def __post_init__(self) -> None:
         if not 0 <= self.index <= len(self.block.operations):
             raise ValueError("insertion index is outside the block")
+
+
+def before(function: Function, op: Op) -> InsertPoint:
+    """Locate the gap immediately before an operation, including nested regions.
+
+    Match by identity and require exactly one occurrence in the input function.
+    The returned point refers to that function version; reacquire it after edits.
+    No SSA verification is performed.
+
+    Args:
+        function: Function to search.
+        op: Existing operation whose position is requested.
+
+    Returns:
+        An insertion point in the operation's containing block.
+
+    Raises:
+        ValueError: The operation is absent or occurs more than once.
+
+    Examples:
+        Locate gaps around a constant without computing its block index:
+
+        In this complete program, `constant` is the operation defining `%0`.
+        The comments mark the insertion points returned by the helpers:
+
+        ```text
+        module {
+          func @answer() -> i32 {
+            // Gap 0: before(function, constant)
+            %0 = const 42 : i32
+            // Gap 1: after(function, constant)
+            return %0
+          }
+        }
+        ```
+
+        ```python
+        from niro import ir, rewrite
+
+        result = ir.Value(ir.ValueId(0), ir.ScalarType.I32)
+        constant = ir.Const(result, 42)
+        block = ir.Block(operations=[constant, ir.Return((result,))])
+        function = ir.Function(
+            "answer", ir.FunctionType((), (result.type,)), ir.Region([block])
+        )
+        assert rewrite.before(function, constant) == rewrite.InsertPoint(block, 0)
+        assert rewrite.after(function, constant) == rewrite.InsertPoint(block, 1)
+        ```
+    """
+    point: InsertPoint | None = None
+    blocks = () if function.body is None else ir.iter_blocks(function.body)
+    for block in blocks:
+        for index, candidate in enumerate(block.operations):
+            if candidate is not op:
+                continue
+            if point is not None:
+                raise ValueError("operation target occurs more than once in the input")
+            point = InsertPoint(block, index)
+    if point is None:
+        raise ValueError("operation target is not in the input function")
+    return point
+
+
+def after(function: Function, op: Op) -> InsertPoint:
+    """Locate the gap immediately after an operation, including at a block's end.
+
+    Use the identity lookup and input-version semantics of
+    [`before`][niro.rewrite.before]. A point after a terminator is representable;
+    callers remain responsible for valid operation ordering when editing.
+
+    Args:
+        function: Function to search.
+        op: Existing operation whose position is requested.
+
+    Returns:
+        An insertion point in the operation's containing block.
+
+    Raises:
+        ValueError: The operation is absent or occurs more than once.
+    """
+    point = before(function, op)
+    return InsertPoint(point.block, point.index + 1)
 
 
 def value_supply(function: Function) -> ValueSupply:
@@ -341,6 +426,74 @@ def replace_uses(
     )
     _check_references(result, mapping)
     return result
+
+
+def replace_op(
+    function: Function,
+    old_op: Op,
+    new_ops: Sequence[Op],
+    *,
+    replacements: Mapping[ValueId, Value] | None = None,
+) -> Function:
+    """Replace one operation with a sequence at its original position.
+
+    Locate the target by identity with [`before`][niro.rewrite.before], then
+    delegate to [`replace_ops`][niro.rewrite.replace_ops]. Result IDs may be
+    preserved or uses redirected with replacements. An empty sequence removes
+    the operation. All replacement and validation semantics are unchanged.
+
+    Args:
+        function: Input function.
+        old_op: Operation to replace.
+        new_ops: Operations to insert in the supplied order.
+        replacements: Old value IDs to replacement values of the same type.
+
+    Returns:
+        The edited function. Inputs are untouched, including on failure.
+
+    Raises:
+        ValueError: The target is absent or ambiguous, or the edit violates
+            the requirements of [`replace_ops`][niro.rewrite.replace_ops].
+
+    Examples:
+        Fold an addition while retaining its result ID and the input constants:
+
+        ```text
+        Before                              After
+        %0 = const 2 : i32                  %0 = const 2 : i32
+        %1 = const 3 : i32                  %1 = const 3 : i32
+        %2 = add %0, %1 : i32               %2 = const 5 : i32
+        return %2                           return %2
+        ```
+
+        ```python
+        from niro import ir, rewrite
+
+        a, b, result = (
+            ir.Value(ir.ValueId(i), ir.ScalarType.I32) for i in range(3)
+        )
+        left, right = ir.Const(a, 2), ir.Const(b, 3)
+        add = ir.Add(result, a, b)
+        block = ir.Block(operations=[left, right, add, ir.Return((result,))])
+        function = ir.Function(
+            "five", ir.FunctionType((), (result.type,)), ir.Region([block])
+        )
+        folded = ir.Const(result, 5)
+        updated = rewrite.replace_op(function, add, (folded,))
+        assert updated.first_block is not None
+        assert updated.first_block.operations == [
+            left, right, folded, ir.Return((result,))
+        ]
+        assert block.operations[2] is add
+        ```
+    """
+    return replace_ops(
+        function,
+        (old_op,),
+        new_ops,
+        at=before(function, old_op),
+        replacements=replacements,
+    )
 
 
 def replace_ops(

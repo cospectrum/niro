@@ -1,5 +1,6 @@
 import copy
 import dataclasses
+from collections.abc import Callable
 
 import pytest
 
@@ -30,6 +31,123 @@ def operations(fn: ir.Function) -> list[ir.Op]:
 
 def check(fn: ir.Function) -> None:
     verify.module(ir.Module(functions=[fn]))
+
+
+@pytest.mark.parametrize("locate, offset", [(rewrite.before, 0), (rewrite.after, 1)])
+@pytest.mark.parametrize("index", [0, 1, 2])
+def test_relative_insert_points_match_identity_and_include_block_boundaries(
+    locate: Callable[[ir.Function, ir.Op], rewrite.InsertPoint],
+    offset: int,
+    index: int,
+) -> None:
+    first, second = ir.UnknownOp("effect", (), ()), ir.UnknownOp("effect", (), ())
+    block = ir.Block(operations=[first, second, ir.Return()])
+    original = function(block)
+    point = locate(original, block.operations[index])
+    assert point.block is block
+    assert point.index == index + offset
+
+
+@pytest.mark.parametrize("locate, offset", [(rewrite.before, 0), (rewrite.after, 1)])
+def test_relative_insert_points_find_the_exact_nested_block(
+    locate: Callable[[ir.Function, ir.Op], rewrite.InsertPoint], offset: int
+) -> None:
+    first, second = ir.UnknownOp("effect", (), ()), ir.UnknownOp("effect", (), ())
+    then_block = ir.Block(operations=[first, ir.Yield()])
+    else_block = ir.Block(operations=[second, ir.Yield()])
+    condition = value(0, ir.ScalarType.BOOL)
+    branch = ir.If((), condition, ir.Region([then_block]), ir.Region([else_block]))
+    original = function(ir.Block((condition,), [branch, ir.Return()]))
+    point = locate(original, second)
+    assert point.block is else_block
+    assert point.index == offset
+    inserted = ir.UnknownOp("inserted", (), ())
+    updated = rewrite.insert_ops(original, (inserted,), at=point)
+    updated_branch = operations(updated)[0]
+    assert isinstance(updated_branch, ir.If)
+    expected = [inserted, second] if offset == 0 else [second, inserted]
+    assert updated_branch.else_region.blocks[0].operations == [*expected, ir.Yield()]
+    assert else_block.operations == [second, ir.Yield()]
+    check(updated)
+
+
+@pytest.mark.parametrize("locate", [rewrite.before, rewrite.after])
+def test_relative_insert_points_reject_absent_and_ambiguous_targets(
+    locate: Callable[[ir.Function, ir.Op], rewrite.InsertPoint],
+) -> None:
+    op = ir.UnknownOp("effect", (), ())
+    external = ir.Function("external", ir.FunctionType((), ()))
+    equal_op = function(
+        ir.Block(operations=[ir.UnknownOp("effect", (), ()), ir.Return()])
+    )
+    for original in (external, equal_op):
+        with pytest.raises(ValueError, match="not in the input"):
+            locate(original, op)
+
+    condition = value(0, ir.ScalarType.BOOL)
+    branch = ir.If(
+        (),
+        condition,
+        ir.Region([ir.Block(operations=[op, ir.Yield()])]),
+        ir.Region([ir.Block(operations=[op, ir.Yield()])]),
+    )
+    repeated_in_block = function(ir.Block(operations=[op, op, ir.Return()]))
+    repeated_in_regions = function(ir.Block((condition,), [branch, ir.Return()]))
+    for original in (repeated_in_block, repeated_in_regions):
+        with pytest.raises(ValueError, match="occurs more than once"):
+            locate(original, op)
+
+
+def test_replace_op_preserves_position_and_result_id() -> None:
+    x, result = value(0), value(1)
+    constant, add = ir.Const(x, 2), ir.Add(result, x, x)
+    block = ir.Block(operations=[constant, add, ir.Return((result,))])
+    original = function(block)
+    folded = ir.Const(result, 4)
+    updated = rewrite.replace_op(original, add, (folded,))
+    assert operations(updated) == [constant, folded, ir.Return((result,))]
+    assert block.operations == [constant, add, ir.Return((result,))]
+    check(updated)
+
+
+def test_replace_op_decomposes_nested_operation_and_redirects_uses() -> None:
+    x, local, out, factor, result = (value(i) for i in range(5))
+    condition = value(5, ir.ScalarType.BOOL)
+    add = ir.Add(local, x, x)
+    branch = ir.If(
+        (out,),
+        condition,
+        ir.Region([ir.Block(operations=[add, ir.Yield((local,))])]),
+        ir.Region([ir.Block(operations=[ir.Yield((x,))])]),
+    )
+    original = function(ir.Block((x, condition), [branch, ir.Return((out,))]))
+    snapshot = copy.deepcopy(original)
+    replacements = (ir.Const(factor, 2), ir.Mul(result, x, factor))
+    updated = rewrite.replace_op(
+        original, add, replacements, replacements={local.id: result}
+    )
+    updated_branch = operations(updated)[0]
+    assert isinstance(updated_branch, ir.If)
+    assert updated_branch.then_region.blocks[0].operations == [
+        *replacements,
+        ir.Yield((result,)),
+    ]
+    assert original == snapshot
+    check(updated)
+
+
+def test_replace_op_can_eliminate_an_operation_and_rejects_dangling_uses() -> None:
+    tensor = ir.TensorType(ir.ScalarType.F32, (2, 3))
+    x, result = value(0, tensor), value(1, tensor)
+    transpose = ir.Transpose(result, x, (0, 1))
+    original = function(ir.Block((x,), [transpose, ir.Return((result,))]))
+    snapshot = copy.deepcopy(original)
+    with pytest.raises(ValueError, match="dangling use"):
+        rewrite.replace_op(original, transpose, ())
+    updated = rewrite.replace_op(original, transpose, (), replacements={result.id: x})
+    assert operations(updated) == [ir.Return((x,))]
+    assert original == snapshot
+    check(updated)
 
 
 def test_replace_uses_is_simultaneous_and_preserves_definitions_and_input() -> None:
