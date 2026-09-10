@@ -5,7 +5,7 @@ from collections.abc import Sequence
 
 import hypothesis
 from hypothesis import strategies as st
-from hypothesis.strategies import DrawFn
+from hypothesis.strategies import DrawFn, SearchStrategy
 
 from niro import ir, optimizations, verify
 
@@ -19,6 +19,17 @@ def modules(draw: DrawFn) -> ir.VerifiedModule:
     for index in range(draw(st.integers(2, 4))):
         functions.append(make_function(draw, f"f{index}", functions))
     return verify.module(ir.Module(functions=list(draw(st.permutations(functions)))))
+
+
+@st.composite
+def inlining_cases(
+    draw: DrawFn, strategy: SearchStrategy[ir.VerifiedModule]
+) -> tuple[ir.VerifiedModule, frozenset[ir.SymbolName] | None]:
+    """Pair a verified module with all targets or a subset of its function symbols."""
+    module = draw(strategy)
+    names = [function.name for function in module.functions]
+    callees = draw(st.one_of(st.none(), st.frozensets(st.sampled_from(names))))
+    return module, callees
 
 
 def make_function(
@@ -139,14 +150,18 @@ def evaluate(
 
 
 @hypothesis.given(
-    modules(),
+    inlining_cases(modules()),
     st.one_of(st.none(), st.integers(0, 20)),
     st.integers(-(2**31), 2**31 - 1),
     st.integers(-(2**31), 2**31 - 1),
 )
 def test_inline_functions_preserves_semantics(
-    module: ir.VerifiedModule, limit: int | None, x: int, y: int
+    case: tuple[ir.VerifiedModule, frozenset[ir.SymbolName] | None],
+    limit: int | None,
+    x: int,
+    y: int,
 ) -> None:
+    module, callees = case
     operations = [
         op
         for function in module.functions
@@ -156,7 +171,9 @@ def test_inline_functions_preserves_semantics(
     hypothesis.event(f"has_calls={any(isinstance(op, ir.Call) for op in operations)}")
     hypothesis.event(f"has_branches={any(isinstance(op, ir.If) for op in operations)}")
     snapshot = copy.deepcopy(module)
-    updated = optimizations.inline_functions(module, max_callee_ops=limit)
+    updated = optimizations.inline_functions(
+        module, callees=callees, max_callee_ops=limit
+    )
     verify.module(updated)
     hypothesis.event(f"rewritten={updated is not module}")
     assert [(f.name, f.type) for f in updated.functions] == [
@@ -169,24 +186,32 @@ def test_inline_functions_preserves_semantics(
                 module, function.name, args
             )
     assert module == snapshot
-    assert optimizations.inline_functions(updated, max_callee_ops=limit) is updated
-    if limit == 0:
+    assert (
+        optimizations.inline_functions(updated, callees=callees, max_callee_ops=limit)
+        is updated
+    )
+    if limit == 0 or callees == frozenset():
         assert updated is module
     if limit is None:
         assert not any(
-            isinstance(op, ir.Call)
+            isinstance(op, ir.Call) and (callees is None or op.callee in callees)
             for function in updated.functions
             if function.body is not None
             for op in ir.iter_ops(function.body)
         )
 
 
-@hypothesis.given(mixed_modules(), st.one_of(st.none(), st.integers(0, 20)))
+@hypothesis.given(
+    inlining_cases(mixed_modules()), st.one_of(st.none(), st.integers(0, 20))
+)
 def test_inline_functions_preserves_validity(
-    module: ir.VerifiedModule, limit: int | None
+    case: tuple[ir.VerifiedModule, frozenset[ir.SymbolName] | None], limit: int | None
 ) -> None:
+    module, callees = case
     snapshot = copy.deepcopy(module)
-    updated = optimizations.inline_functions(module, max_callee_ops=limit)
+    updated = optimizations.inline_functions(
+        module, callees=callees, max_callee_ops=limit
+    )
     verify.module(updated)
     hypothesis.event(f"rewritten={updated is not module}")
     assert module == snapshot
@@ -195,4 +220,7 @@ def test_inline_functions_preserves_validity(
     assert [(f.name, f.type, f.attributes) for f in updated.functions] == [
         (f.name, f.type, f.attributes) for f in module.functions
     ]
-    assert optimizations.inline_functions(updated, max_callee_ops=limit) is updated
+    assert (
+        optimizations.inline_functions(updated, callees=callees, max_callee_ops=limit)
+        is updated
+    )

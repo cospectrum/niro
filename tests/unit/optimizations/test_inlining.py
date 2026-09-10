@@ -2,6 +2,7 @@ import copy
 import dataclasses
 import itertools
 from collections.abc import Sequence
+from collections.abc import Set as AbstractSet
 
 import pytest
 
@@ -521,4 +522,106 @@ def test_negative_limit_is_rejected_without_mutating_input() -> None:
     snapshot = copy.deepcopy(original)
     with pytest.raises(ValueError, match="nonnegative"):
         optimizations.inline_functions(original, max_callee_ops=-1)
+    assert original == snapshot
+
+
+@pytest.mark.parametrize(
+    "order", list(itertools.permutations(("leaf", "middle", "root")))
+)
+@pytest.mark.parametrize(
+    "callees, root_targets, middle_targets",
+    [
+        (None, [], []),
+        (set(), ["middle"], ["leaf"]),
+        ({"leaf"}, ["middle"], []),
+        (frozenset({"middle"}), ["leaf"], ["leaf"]),
+        ({"leaf", "middle"}, [], []),
+        ({"root"}, ["middle"], ["leaf"]),
+    ],
+)
+def test_selection_applies_to_targets_in_every_caller(
+    order: tuple[str, ...],
+    callees: AbstractSet[ir.SymbolName] | None,
+    root_targets: list[str],
+    middle_targets: list[str],
+) -> None:
+    x, result = value(0), value(1)
+    leaf = function("leaf", (x,), [ir.Add(result, x, x), ir.Return((result,))])
+    middle = function(
+        "middle", (x,), [ir.Call("leaf", (x,), (result,)), ir.Return((result,))]
+    )
+    root = function(
+        "root", (x,), [ir.Call("middle", (x,), (result,)), ir.Return((result,))]
+    )
+    functions = {f.name: f for f in (leaf, middle, root)}
+    original = verify.module(ir.Module(functions=[functions[name] for name in order]))
+    snapshot = copy.deepcopy(original)
+    selected_snapshot = None if callees is None else set(callees)
+    updated = optimizations.inline_functions(original, callees=callees)
+    assert [op.callee for op in calls(named(updated, "root"))] == root_targets
+    assert [op.callee for op in calls(named(updated, "middle"))] == middle_targets
+    assert evaluate(updated, "root", (7,)) == evaluate(original, "root", (7,))
+    assert original == snapshot
+    assert callees == selected_snapshot
+    assert optimizations.inline_functions(updated, callees=callees) is updated
+    if callees in (set(), {"root"}):
+        assert updated is original
+
+
+@pytest.mark.parametrize(
+    "callees, root_targets",
+    [({"middle"}, ["leaf", "leaf"]), ({"middle", "leaf"}, ["middle"])],
+)
+def test_selection_controls_expansion_before_size_check(
+    callees: AbstractSet[ir.SymbolName], root_targets: list[str]
+) -> None:
+    x, a, b, c = (value(i) for i in range(4))
+    leaf = function(
+        "leaf",
+        (x,),
+        [ir.Add(a, x, x), ir.Add(b, a, a), ir.Add(c, b, b), ir.Return((c,))],
+    )
+    middle = function(
+        "middle",
+        (x,),
+        [ir.Call("leaf", (x,), (a,)), ir.Call("leaf", (a,), (b,)), ir.Return((b,))],
+    )
+    root = function("root", (x,), [ir.Call("middle", (x,), (a,)), ir.Return((a,))])
+    original = verify.module(ir.Module(functions=[root, middle, leaf]))
+    updated = optimizations.inline_functions(
+        original, callees=callees, max_callee_ops=4
+    )
+    assert [op.callee for op in calls(named(updated, "root"))] == root_targets
+    assert evaluate(updated, "root", (3,)) == evaluate(original, "root", (3,))
+    assert (
+        optimizations.inline_functions(updated, callees=callees, max_callee_ops=4)
+        is updated
+    )
+
+
+def test_selection_does_not_hide_cycles_through_unselected_functions() -> None:
+    x, a = value(0), value(1)
+    first = function("first", (x,), [ir.Call("second", (x,), (a,)), ir.Return((a,))])
+    second = function("second", (x,), [ir.Call("first", (x,), (a,)), ir.Return((a,))])
+    root = function("root", (x,), [ir.Call("first", (x,), (a,)), ir.Return((a,))])
+    external = ir.Function("external", root.type)
+    original = verify.module(ir.Module(functions=[root, first, second, external]))
+    assert (
+        optimizations.inline_functions(original, callees={"first", "external"})
+        is original
+    )
+
+
+@pytest.mark.parametrize("callees", [{"missing"}, {"global"}, {"helper", "missing"}])
+def test_selection_rejects_unknown_functions_without_mutation(
+    callees: AbstractSet[ir.SymbolName],
+) -> None:
+    x = value(0)
+    helper = function("helper", (x,), [ir.Return((x,))])
+    original = verify.module(
+        ir.Module(functions=[helper], globals=[ir.Global("global", x.type, 0)])
+    )
+    snapshot = copy.deepcopy(original)
+    with pytest.raises(ValueError, match="Unknown callee functions"):
+        optimizations.inline_functions(original, callees=callees)
     assert original == snapshot

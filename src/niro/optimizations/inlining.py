@@ -3,15 +3,19 @@
 import dataclasses
 import graphlib
 from collections.abc import Mapping
+from collections.abc import Set as AbstractSet
 
 from niro import ir, rewrite, verify
-from niro.ir import VerifiedModule
+from niro.ir import SymbolName, VerifiedModule
 
 __all__ = ["inline_functions"]
 
 
 def inline_functions(
-    module: VerifiedModule, *, max_callee_ops: int | None = None
+    module: VerifiedModule,
+    *,
+    callees: AbstractSet[SymbolName] | None = None,
+    max_callee_ops: int | None = None,
 ) -> VerifiedModule:
     """Inline calls to nonrecursive definitions, including inside nested regions.
 
@@ -21,6 +25,11 @@ def inline_functions(
     External declarations and all functions in direct or indirect call cycles
     are excluded as callees. Calls to eligible helpers inside recursive
     functions can still be inlined.
+
+    Selection applies to call targets throughout the module, including inside
+    unselected callers. Calls to unselected functions remain calls when a
+    selected callee's body is copied. Selection does not override recursion,
+    external-declaration, or size restrictions.
 
     Process callees before their callers, independently of module function
     order. The size limit applies to each callee's body after its own eligible
@@ -36,6 +45,8 @@ def inline_functions(
 
     Args:
         module: Verified input module. Its functions and metadata are not mutated.
+        callees: Function symbols to consider for inlining. None selects all
+            functions; an empty set inlines nothing. Accepts sets and frozensets.
         max_callee_ops: Maximum number of operations in an eligible callee's body.
             None imposes no size limit; zero disables inlining. Must be nonnegative.
 
@@ -44,7 +55,8 @@ def inline_functions(
         nothing changes. Unchanged IR and metadata may be shared.
 
     Raises:
-        ValueError: max_callee_ops is negative.
+        ValueError: max_callee_ops is negative, or callees contains names that
+            do not identify functions in the module.
 
     Examples:
         Inline a two-operation helper while retaining its definition:
@@ -103,12 +115,21 @@ def inline_functions(
         assert body.operations == [ir.Add(fresh, x, x), ir.Return((fresh,))]
         assert optimized.functions[0] is helper
         assert optimizations.inline_functions(module, max_callee_ops=1) is module
+        assert optimizations.inline_functions(module, callees={"double"}) == optimized
+        assert optimizations.inline_functions(module, callees={"caller"}) is module
+        assert optimizations.inline_functions(module, callees=set()) is module
         ```
     """
     if max_callee_ops is not None and max_callee_ops < 0:
         raise ValueError("max_callee_ops must be nonnegative or None")
 
     functions = {function.name: function for function in module.functions}
+    if callees is not None:
+        unknown = callees - functions.keys()
+        if unknown:
+            raise ValueError(f"Unknown callee functions: {', '.join(sorted(unknown))}")
+        if not callees:
+            return module
     graph = {
         name: {
             op.callee
@@ -118,12 +139,14 @@ def inline_functions(
         for name, function in functions.items()
     }
     recursive = _recursive_functions(graph)
-    dependencies = {name: callees - recursive for name, callees in graph.items()}
+    dependencies = {name: targets - recursive for name, targets in graph.items()}
     eligible: dict[ir.SymbolName, ir.Function] = {}
     for name in graphlib.TopologicalSorter(dependencies).static_order():
         function = _inline_calls(functions[name], eligible)
         functions[name] = function
         if function.body is None or name in recursive:
+            continue
+        if callees is not None and name not in callees:
             continue
         if max_callee_ops is not None:
             size = sum(1 for _ in ir.iter_ops(function.body))
