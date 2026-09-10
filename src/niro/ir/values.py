@@ -48,6 +48,8 @@ class ValueSupply:
         """Allocate a typed value and advance this supply.
 
         Examples:
+            Allocation returns value references; it does not insert IR:
+
             ```python
             from niro import ir
 
@@ -68,6 +70,8 @@ class ValueSupply:
         to allocate fragments that will coexist in the same function.
 
         Examples:
+            Copy the allocator, then allocate from the copy:
+
             ```python
             from niro import ir
 

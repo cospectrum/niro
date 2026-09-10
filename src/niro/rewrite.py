@@ -12,8 +12,20 @@ types. Passes remain responsible for dominance, region scope, terminators, and
 semantic equivalence (including effects). Verify the completed module with
 [`niro.verify.module`][]. Traversal and cloning also accept incomplete fragments.
 
+Examples start with MLIR-like sketches of the IR, followed by executable Python.
+The sketches use Niro operation names and numeric SSA IDs matching the Python
+examples.
+
 Examples:
     Remove an identity transpose and redirect its consumers:
+
+    ```text
+    Before                              After
+    %1 = transpose %0, [0, 1]           return %0
+    return %1
+
+    replacements: {%1: %0}
+    ```
 
     ```python
     from niro import ir, rewrite
@@ -111,6 +123,11 @@ def with_operands(op: Op, operands: Sequence[Value]) -> Op:
     Examples:
         Swap an addition's operands while preserving its result:
 
+        ```text
+        Before                              After
+        %2 = add %0, %1 : i32               %2 = add %1, %0 : i32
+        ```
+
         ```python
         from niro import ir, rewrite
 
@@ -153,6 +170,15 @@ def map_regions(op: Op, transform: Callable[[Region], Region]) -> Op:
 
     Examples:
         Complete both empty branches of an If with Yield terminators:
+
+        ```text
+        Before (unfinished)                 After
+        if %0 {                             if %0 {
+                                              yield
+        } else {                            } else {
+                                              yield
+        }                                   }
+        ```
 
         ```python
         import dataclasses
@@ -211,6 +237,12 @@ def map_blocks(region: Region, transform: Callable[[Block], Block]) -> Region:
     Examples:
         Complete an unfinished function body with a Return terminator:
 
+        ```text
+        Before (unfinished)                 After
+        %0 = const 42 : i32                 %0 = const 42 : i32
+                                            return %0
+        ```
+
         ```python
         import dataclasses
         from niro import ir, rewrite
@@ -260,6 +292,19 @@ def replace_uses(
     Examples:
         Redirect uses of a duplicate constant. The definitions remain in place;
         use [`erase_ops`][niro.rewrite.erase_ops] to remove the unused one later:
+
+        ```text
+        Before                              After
+        %0 = const 5 : i32                  %0 = const 5 : i32
+        %1 = const 5 : i32                  %1 = const 5 : i32
+        %2 = add %1, %1 : i32               %2 = add %0, %0 : i32
+        return %2                           return %2
+
+        mapping: {%1: %0}
+
+        With where selecting the addition's operand_index == 0:
+        %2 = add %1, %1 : i32         ->     %2 = add %0, %1 : i32
+        ```
 
         ```python
         from niro import ir, rewrite
@@ -334,6 +379,14 @@ def replace_ops(
     Examples:
         Fold two constants and their addition into one constant. Preserving the
         result ID keeps the Return valid without a replacement value map:
+
+        ```text
+        Before                              After
+        %0 = const 2 : i32                  %2 = const 5 : i32
+        %1 = const 3 : i32                  return %2
+        %2 = add %0, %1 : i32
+        return %2
+        ```
 
         ```python
         from niro import ir, rewrite
@@ -423,6 +476,12 @@ def insert_ops(function: Function, ops: Sequence[Op], *, at: InsertPoint) -> Fun
         Insert a constant before the Return. Insertion alone does not change
         existing operands, so the new result is initially unused:
 
+        ```text
+        Before                              After
+        return                              %0 = const 42 : i32
+                                            return
+        ```
+
         ```python
         from niro import ir, rewrite
 
@@ -452,6 +511,13 @@ def erase_ops(function: Function, ops: Sequence[Op]) -> Function:
         Remove an unused calculation together with its constant. The addition
         uses the constant, but both disappear in the same edit:
 
+        ```text
+        Before                              After
+        %0 = const 3 : i32                  return
+        %1 = add %0, %0 : i32
+        return
+        ```
+
         ```python
         from niro import ir, rewrite
 
@@ -479,6 +545,14 @@ def move_ops(function: Function, ops: Sequence[Op], *, to: InsertPoint) -> Funct
     Examples:
         Reorder two independent constants, keeping both before their consumer.
         Index 2 denotes the gap before Add in the original block:
+
+        ```text
+        Before                              After
+        %0 = const 2 : i32                  %1 = const 3 : i32
+        %1 = const 3 : i32                  %0 = const 2 : i32
+        %2 = add %0, %1 : i32               %2 = add %0, %1 : i32
+        return %2                           return %2
+        ```
 
         ```python
         from niro import ir, rewrite
@@ -531,6 +605,16 @@ def clone_region(
     Examples:
         Copy a branch that captures x, replacing that capture with a destination
         function's argument. Local definitions get fresh IDs; Yield is remapped:
+
+        ```text
+        Source branch (unchanged)           Copied branch
+        %1 = add %0, %0 : i32               %11 = add %10, %10 : i32
+        yield %1                            yield %11
+
+        captures:        {%0: %10}
+        values (return): {%1: %11}
+        supply.next_id:  11 -> 12
+        ```
 
         ```python
         from niro import ir, rewrite
