@@ -6,10 +6,11 @@
 
 from __future__ import annotations
 
-from typing import cast, overload
+from collections.abc import Mapping
+from typing import assert_never, cast, overload
 
 from xdsl.dialect_interfaces.op_asm import OpAsmDialectInterface
-from xdsl.dialects import arith, builtin, func, ml_program, scf, tensor
+from xdsl.dialects import arith, builtin, cf, func, ml_program, scf, tensor
 from xdsl.dialects.linalg import ops as linalg
 from xdsl.ir import Attribute, Block, Operation, Region, SSAValue
 
@@ -23,16 +24,10 @@ ValueTable = dict[ir.ValueId, SSAValue]
 def to_mlir(niro_module: VerifiedModule) -> builtin.ModuleOp:
     """Convert verified Niro IR to a verified, high-level MLIR module.
 
-    Raise NotImplementedError for control-flow branches or unknown operations.
+    Lower branches to the CF dialect. Multiblock If arms use scf.execute_region
+    inside scf.if, preserving their control flow and yielded results.
+    Raise NotImplementedError for unknown operations.
     """
-    for function in niro_module.functions:
-        if function.body is not None and any(
-            isinstance(op, (ir.Branch, ir.CondBranch))
-            for op in ir.iter_ops(function.body)
-        ):
-            raise NotImplementedError(
-                "control-flow branches cannot be lowered to MLIR yet"
-            )
     lowered_functions = [
         _lower_function(function) for function in niro_module.functions
     ]
@@ -56,8 +51,8 @@ def _lower_function(
 ) -> tuple[tuple[Operation, ...], func.FuncOp]:
     """Return generated constant globals and the lowered function.
 
-    A definition must have exactly one body block. External declarations have
-    no generated globals.
+    Precreate CFG blocks and lower definitions before uses. External declarations
+    have no generated globals.
     """
     inputs = [_lower_type(value_type) for value_type in function.type.inputs]
     outputs = [_lower_type(value_type) for value_type in function.type.outputs]
@@ -65,27 +60,9 @@ def _lower_function(
         result = func.FuncOp.external(function.name, inputs, outputs)
         result.attributes.update(_lower_attributes(function.attributes))
         return (), result
-    (niro_block,) = function.body.blocks
-    block = Block(arg_types=inputs)
     generated_globals: list[Operation] = []
-    values: ValueTable = {
-        argument.id: block_argument
-        for argument, block_argument in zip(
-            niro_block.arguments, block.args, strict=True
-        )
-    }
-    _emit_operations(
-        block,
-        values,
-        generated_globals,
-        function.name,
-        niro_block.operations,
-    )
-    result = func.FuncOp(
-        function.name,
-        (inputs, outputs),
-        Region(block),
-    )
+    body = _emit_cfg(function.body, {}, generated_globals, function.name)
+    result = func.FuncOp(function.name, (inputs, outputs), body)
     result.attributes.update(_lower_attributes(function.attributes))
     return tuple(generated_globals), result
 
@@ -96,6 +73,7 @@ def _emit_operations(
     generated_globals: list[Operation],
     function_name: str,
     operations: list[ir.Op],
+    blocks: Mapping[ir.Block, Block],
 ) -> None:
     """Append lowered operations in order, updating values and generated globals."""
     for operation in operations:
@@ -105,6 +83,7 @@ def _emit_operations(
             generated_globals,
             function_name,
             operation,
+            blocks,
         )
 
 
@@ -114,6 +93,7 @@ def _emit_operation(
     generated_globals: list[Operation],
     function_name: str,
     operation: ir.Op,
+    blocks: Mapping[ir.Block, Block],
 ) -> None:
     """Append an operation's lowering and record its results and any globals.
 
@@ -151,6 +131,29 @@ def _emit_operation(
             )
             block.add_op(lowered)
             _bind_results(values, operation.results, lowered.results)
+        case ir.Branch():
+            block.add_op(
+                cf.BranchOp(
+                    blocks[operation.target],
+                    *(_lookup_value(values, value) for value in operation.arguments),
+                )
+            )
+        case ir.CondBranch():
+            block.add_op(
+                cf.ConditionalBranchOp(
+                    _lookup_value(values, operation.condition),
+                    blocks[operation.true_target],
+                    [
+                        _lookup_value(values, value)
+                        for value in operation.true_arguments
+                    ],
+                    blocks[operation.false_target],
+                    [
+                        _lookup_value(values, value)
+                        for value in operation.false_arguments
+                    ],
+                )
+            )
         case ir.Return():
             block.add_op(
                 func.ReturnOp(
@@ -169,12 +172,14 @@ def _emit_operation(
                 [_lower_type(value.type) for value in operation.results],
                 _emit_region(
                     operation.then_region,
+                    operation.results,
                     values,
                     generated_globals,
                     function_name,
                 ),
                 _emit_region(
                     operation.else_region,
+                    operation.results,
                     values,
                     generated_globals,
                     function_name,
@@ -186,30 +191,73 @@ def _emit_operation(
             raise NotImplementedError(
                 f"cannot lower unknown operation to MLIR: {operation.name}"
             )
+        case _ as unreachable:
+            assert_never(unreachable)
 
 
-def _emit_region(
+def _emit_cfg(
     region: ir.Region,
     visible_values: ValueTable,
     generated_globals: list[Operation],
     function_name: str,
 ) -> Region:
-    """Return a lowered single-block, argument-free nested region.
+    """Lower a CFG in reverse postorder while preserving source block layout.
 
-    Copy visible bindings so local results do not escape; append any generated
-    constant globals to the shared list.
+    Precreate blocks and arguments for forward edges and loop backedges. Emit
+    dominating definitions before their uses. Copy enclosing value bindings so
+    region-local values do not escape; share the generated constant globals.
     """
-    (niro_block,) = region.blocks
-    block = Block()
+    blocks = {
+        source: Block(arg_types=[_lower_type(v.type) for v in source.arguments])
+        for source in region.blocks
+    }
     values = dict(visible_values)
-    _emit_operations(
-        block,
-        values,
-        generated_globals,
-        function_name,
-        niro_block.operations,
-    )
-    return Region(block)
+    for source, target in blocks.items():
+        _bind_results(values, source.arguments, tuple(target.args))
+    visited: set[ir.Block] = set()
+    postorder: list[ir.Block] = []
+    pending = [(region.blocks[0], False)]
+    while pending:
+        source, exiting = pending.pop()
+        if exiting:
+            postorder.append(source)
+            continue
+        if source in visited:
+            continue
+        visited.add(source)
+        pending.append((source, True))
+        pending.extend(
+            (target, False) for target in ir.get_successors(source.operations[-1])
+        )
+    for source in reversed(postorder):
+        _emit_operations(
+            blocks[source],
+            values,
+            generated_globals,
+            function_name,
+            source.operations,
+            blocks,
+        )
+    return Region(list(blocks.values()))
+
+
+def _emit_region(
+    region: ir.Region,
+    results: tuple[ir.Value, ...],
+    visible_values: ValueTable,
+    generated_globals: list[Operation],
+    function_name: str,
+) -> Region:
+    """Lower an If arm, wrapping multiblock CFGs in scf.execute_region.
+
+    scf.if requires single-block arms. An execute region preserves arbitrary
+    internal branches and yields its results to the enclosing arm.
+    """
+    lowered = _emit_cfg(region, visible_values, generated_globals, function_name)
+    if len(region.blocks) == 1:
+        return lowered
+    execute = scf.ExecuteRegionOp([_lower_type(v.type) for v in results], lowered)
+    return Region(Block([execute, scf.YieldOp(*execute.results)]))
 
 
 def _emit_const(

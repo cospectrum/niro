@@ -1,12 +1,13 @@
 """Bounded verified modules for structural properties shared by optimization passes."""
 
+import dataclasses
 from collections.abc import Sequence
 
 import hypothesis
 from hypothesis import strategies as st
 from hypothesis.strategies import DrawFn
 
-from niro import ir, verify
+from niro import ir, rewrite, verify
 
 
 @st.composite
@@ -160,3 +161,57 @@ def populate(
             returned = results[-1]
     operations.append(ir.Return((returned,) * len(function.type.outputs)))
     function.body = ir.Region([ir.Block((argument, condition), operations)])
+    function.body = with_control_flow(draw, function).body
+
+
+def with_control_flow(draw: DrawFn, function: ir.Function) -> ir.Function:
+    """Insert bounded CFGs into single-block regions, preserving their computations.
+
+    Loop conditions become false on the first backedge, so every generated
+    program terminates whenever its original computations terminate.
+    """
+    assert function.body is not None
+    condition = next(
+        v for v in function.body.blocks[0].arguments if v.type is ir.ScalarType.BOOL
+    )
+    supply = rewrite.value_supply(function)
+
+    def transform(region: ir.Region) -> ir.Region:
+        (source,) = region.blocks
+        operations = [rewrite.map_regions(op, transform) for op in source.operations]
+        kind = draw(st.sampled_from(["none", "split", "diamond", "loop", "exits"]))
+        hypothesis.event(f"cfg={kind}")
+        if kind == "none":
+            return ir.Region([ir.Block(source.arguments, operations)])
+        split = (
+            len(operations) - 1
+            if kind == "exits"
+            else draw(st.integers(0, len(operations) - 1))
+        )
+        entry = ir.Block(source.arguments, operations[:split])
+        tail = ir.Block(operations=operations[split:])
+        rest = [tail]
+        if kind == "split":
+            entry.operations.append(ir.Branch(tail))
+        elif kind == "exits":
+            other = ir.Block(operations=list(tail.operations))
+            entry.operations.append(ir.CondBranch(condition, tail, other))
+            rest.append(other)
+        elif kind == "diamond":
+            left = ir.Block(operations=[ir.Branch(tail)])
+            right = ir.Block(operations=[ir.Branch(tail)])
+            entry.operations.append(ir.CondBranch(condition, left, right))
+            rest.extend([left, right])
+        else:
+            flag = supply.fresh(ir.ScalarType.BOOL)
+            false = supply.fresh(ir.ScalarType.BOOL)
+            loop = ir.Block((flag,))
+            loop.operations = [
+                ir.Const(false, False),
+                ir.CondBranch(flag, loop, tail, (false,), ()),
+            ]
+            entry.operations.append(ir.Branch(loop, (condition,)))
+            rest.append(loop)
+        return ir.Region([entry, *draw(st.permutations(rest))])
+
+    return dataclasses.replace(function, body=transform(function.body))

@@ -9,7 +9,7 @@ from hypothesis.strategies import DrawFn, SearchStrategy
 
 from niro import ir, optimizations, verify
 
-from .strategies import mixed_modules
+from .strategies import mixed_modules, with_control_flow
 
 
 @st.composite
@@ -17,7 +17,9 @@ def modules(draw: DrawFn) -> ir.VerifiedModule:
     """Build small call DAGs, including nested calls, captures and ordered effects."""
     functions: list[ir.Function] = []
     for index in range(draw(st.integers(2, 4))):
-        functions.append(make_function(draw, f"f{index}", functions))
+        functions.append(
+            with_control_flow(draw, make_function(draw, f"f{index}", functions))
+        )
     return verify.module(ir.Module(functions=list(draw(st.permutations(functions)))))
 
 
@@ -118,33 +120,57 @@ def evaluate(
     def run(
         block: ir.Block, scope: dict[ir.ValueId, int | bool]
     ) -> tuple[int | bool, ...]:
-        for op in block.operations:
-            match op:
-                case ir.Add():
-                    # Scalar i32 addition wraps, including after repeated inlining.
-                    total = int(scope[op.lhs.id]) + int(scope[op.rhs.id])
-                    scope[op.result.id] = (total + 2**31) % 2**32 - 2**31
-                case ir.Call():
-                    results = call(op.callee, tuple(scope[v.id] for v in op.arguments))
-                    scope.update(
-                        (v.id, r) for v, r in zip(op.results, results, strict=True)
-                    )
-                case ir.If():
-                    region = (
-                        op.then_region if scope[op.condition.id] else op.else_region
-                    )
-                    results = run(region.blocks[0], dict(scope))
-                    scope.update(
-                        (v.id, r) for v, r in zip(op.results, results, strict=True)
-                    )
-                case ir.UnknownOp():
-                    assert not op.results
-                    effects.append((op.name, tuple(scope[v.id] for v in op.operands)))
-                case ir.Return() | ir.Yield():
-                    return tuple(scope[v.id] for v in op.operands)
-                case _:
-                    raise AssertionError(f"unexpected test operation: {op}")
-        raise AssertionError("missing terminator")
+        for _ in range(10000):
+            for op in block.operations:
+                match op:
+                    case ir.Branch() | ir.CondBranch():
+                        if isinstance(op, ir.Branch):
+                            target, arguments = op.target, op.arguments
+                        elif scope[op.condition.id]:
+                            target, arguments = op.true_target, op.true_arguments
+                        else:
+                            target, arguments = op.false_target, op.false_arguments
+                        passed = tuple(scope[value.id] for value in arguments)
+                        scope.update(
+                            (arg.id, value)
+                            for arg, value in zip(target.arguments, passed, strict=True)
+                        )
+                        block = target
+                        break
+                    case ir.Const():
+                        assert isinstance(op.literal, (int, bool))
+                        scope[op.result.id] = op.literal
+                    case ir.Add():
+                        # Scalar i32 addition wraps, including after repeated inlining.
+                        total = int(scope[op.lhs.id]) + int(scope[op.rhs.id])
+                        scope[op.result.id] = (total + 2**31) % 2**32 - 2**31
+                    case ir.Call():
+                        results = call(
+                            op.callee, tuple(scope[v.id] for v in op.arguments)
+                        )
+                        scope.update(
+                            (v.id, r) for v, r in zip(op.results, results, strict=True)
+                        )
+                    case ir.If():
+                        region = (
+                            op.then_region if scope[op.condition.id] else op.else_region
+                        )
+                        results = run(region.blocks[0], dict(scope))
+                        scope.update(
+                            (v.id, r) for v, r in zip(op.results, results, strict=True)
+                        )
+                    case ir.UnknownOp():
+                        assert not op.results
+                        effects.append(
+                            (op.name, tuple(scope[v.id] for v in op.operands))
+                        )
+                    case ir.Return() | ir.Yield():
+                        return tuple(scope[v.id] for v in op.operands)
+                    case _:
+                        raise AssertionError(f"unexpected test operation: {op}")
+            else:
+                raise AssertionError("missing terminator")
+        raise AssertionError("execution step limit exceeded")
 
     return call(name, arguments), effects
 

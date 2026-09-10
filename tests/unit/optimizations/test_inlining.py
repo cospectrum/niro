@@ -54,45 +54,62 @@ def evaluate(
     def run(
         body: ir.Block, scope: dict[ir.ValueId, int | bool]
     ) -> tuple[int | bool, ...]:
-        for op in body.operations:
-            operands = tuple(scope[v.id] for v in ir.get_operands(op))
-            match op:
-                case ir.Const():
-                    assert isinstance(op.literal, (int, bool))
-                    results = (op.literal,)
-                case ir.Add():
-                    results = (operands[0] + operands[1],)
-                case ir.Call():
-                    callee = block(named(module, op.callee))
-                    results = run(
-                        callee,
-                        {
-                            arg.id: operand
-                            for arg, operand in zip(
-                                callee.arguments, operands, strict=True
-                            )
-                        },
-                    )
-                case ir.If():
-                    selected = op.then_region if operands[0] else op.else_region
-                    results = run(selected.blocks[0], dict(scope))
-                case ir.GetGlobal():
-                    global_ = next(g for g in module.globals if g.name == op.name)
-                    assert isinstance(global_.initializer, (int, bool))
-                    results = (global_.initializer,)
-                case ir.UnknownOp():
-                    assert not op.results
-                    effects.append((op.name, operands))
-                    results = ()
-                case ir.Return() | ir.Yield():
-                    return operands
-                case _:
-                    raise AssertionError(f"unexpected test operation: {op}")
-            scope.update(
-                (result.id, operand)
-                for result, operand in zip(ir.get_results(op), results, strict=True)
-            )
-        raise AssertionError("missing terminator")
+        for _ in range(10000):
+            for op in body.operations:
+                operands = tuple(scope[v.id] for v in ir.get_operands(op))
+                match op:
+                    case ir.Branch() | ir.CondBranch():
+                        if isinstance(op, ir.Branch):
+                            target, arguments = op.target, op.arguments
+                        elif scope[op.condition.id]:
+                            target, arguments = op.true_target, op.true_arguments
+                        else:
+                            target, arguments = op.false_target, op.false_arguments
+                        passed = tuple(scope[value.id] for value in arguments)
+                        scope.update(
+                            (arg.id, value)
+                            for arg, value in zip(target.arguments, passed, strict=True)
+                        )
+                        body = target
+                        break
+                    case ir.Const():
+                        assert isinstance(op.literal, (int, bool))
+                        results = (op.literal,)
+                    case ir.Add():
+                        results = (operands[0] + operands[1],)
+                    case ir.Call():
+                        callee = block(named(module, op.callee))
+                        results = run(
+                            callee,
+                            {
+                                arg.id: operand
+                                for arg, operand in zip(
+                                    callee.arguments, operands, strict=True
+                                )
+                            },
+                        )
+                    case ir.If():
+                        selected = op.then_region if operands[0] else op.else_region
+                        results = run(selected.blocks[0], dict(scope))
+                    case ir.GetGlobal():
+                        global_ = next(g for g in module.globals if g.name == op.name)
+                        assert isinstance(global_.initializer, (int, bool))
+                        results = (global_.initializer,)
+                    case ir.UnknownOp():
+                        assert not op.results
+                        effects.append((op.name, operands))
+                        results = ()
+                    case ir.Return() | ir.Yield():
+                        return operands
+                    case _:
+                        raise AssertionError(f"unexpected test operation: {op}")
+                scope.update(
+                    (result.id, operand)
+                    for result, operand in zip(ir.get_results(op), results, strict=True)
+                )
+            else:
+                raise AssertionError("missing terminator")
+        raise AssertionError("execution step limit exceeded")
 
     entry = block(named(module, name))
     result = run(
@@ -627,7 +644,7 @@ def test_selection_rejects_unknown_functions_without_mutation(
     assert pickle.dumps(original) == snapshot
 
 
-def test_inlines_single_block_helpers_in_cfg_callers_and_skips_cfg_callees() -> None:
+def test_inlines_single_block_and_cfg_callees() -> None:
     x, result = value(0), value(1)
     helper = function("helper", (x,), [ir.Add(result, x, x), ir.Return((result,))])
     exit_ = ir.Block(operations=[ir.Return((result,))])
@@ -640,11 +657,199 @@ def test_inlines_single_block_helpers_in_cfg_callers_and_skips_cfg_callees() -> 
     snapshot = pickle.dumps(original)
     updated = optimizations.inline_functions(original)
     assert calls(named(updated, "cfg")) == []
-    assert [op.callee for op in calls(named(updated, "caller"))] == ["cfg"]
+    assert calls(named(updated, "caller")) == []
+    assert evaluate(updated, "caller", (7,)) == evaluate(original, "caller", (7,))
     updated_cfg = named(updated, "cfg")
     assert updated_cfg.body is not None
     assert ir.get_successors(block(updated_cfg).operations[-1]) == (
         updated_cfg.body.blocks[1],
     )
     assert pickle.dumps(original) == snapshot
+    assert optimizations.inline_functions(updated) is updated
+
+
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("flag", [False, True])
+@pytest.mark.parametrize("arity", [0, 1, 2])
+def test_cfg_inlining_preserves_loop_calls_multiple_returns_and_effects(
+    nested: bool, flag: bool, arity: int
+) -> None:
+    x, condition, doubled = value(0), value(1, ir.ScalarType.BOOL), value(2)
+    left = ir.Block(
+        operations=[ir.UnknownOp("left", (x,), ()), ir.Return((x,) * arity)]
+    )
+    right = ir.Block(
+        operations=[
+            ir.Add(doubled, x, x),
+            ir.UnknownOp("right", (doubled,), ()),
+            ir.Return((doubled,) * arity),
+        ]
+    )
+    helper = ir.Function(
+        "helper",
+        ir.FunctionType((x.type, condition.type), (x.type,) * arity),
+        ir.Region(
+            [
+                ir.Block((x, condition), [ir.CondBranch(condition, left, right)]),
+                right,
+                left,
+            ]
+        ),
+    )
+    carried, repeat = value(2), value(3, ir.ScalarType.BOOL)
+    results = tuple(value(4 + i) for i in range(arity))
+    stop = value(6, ir.ScalarType.BOOL)
+    exit_ = ir.Block(operations=[ir.Yield(results) if nested else ir.Return(results)])
+    loop = ir.Block(
+        (carried, repeat),
+        [ir.Call("helper", (carried, repeat), results), ir.Const(stop, False)],
+    )
+    loop.operations.append(
+        ir.CondBranch(
+            repeat, loop, exit_, (results[0] if results else carried, stop), ()
+        )
+    )
+    start = ir.Block(operations=[ir.Branch(loop, (x, condition))])
+    body = ir.Region([start, exit_, loop])
+    if nested:
+        outer_results = tuple(value(7 + i) for i in range(arity))
+        body = ir.Region(
+            [
+                ir.Block(
+                    (x, condition),
+                    [
+                        ir.If(
+                            outer_results,
+                            condition,
+                            body,
+                            ir.Region([ir.Block(operations=[ir.Yield((x,) * arity)])]),
+                        ),
+                        ir.Return(outer_results),
+                    ],
+                )
+            ]
+        )
+    else:
+        start.arguments = (x, condition)
+    caller = ir.Function("caller", helper.type, body)
+    original = verify.module(ir.Module(functions=[caller, helper]))
+    snapshot = pickle.dumps(original)
+    updated = optimizations.inline_functions(original)
+    assert calls(named(updated, "caller")) == []
+    assert evaluate(updated, "caller", (7, flag)) == evaluate(
+        original, "caller", (7, flag)
+    )
+    assert pickle.dumps(original) == snapshot
+    assert optimizations.inline_functions(updated) is updated
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_inlines_nonreturning_cfg_and_removes_unreachable_continuation(
+    nested: bool,
+) -> None:
+    forever = ir.Block()
+    forever.operations = [ir.Branch(forever)]
+    helper = ir.Function(
+        "forever",
+        ir.FunctionType((), (ir.ScalarType.I32,)),
+        ir.Region([ir.Block(operations=[ir.Branch(forever)]), forever]),
+    )
+    result, captured = value(0), value(1)
+    start = ir.Block(
+        operations=[
+            ir.Call("forever", (), (result,)),
+            ir.UnknownOp("unreachable", (result,), ()),
+        ]
+    )
+    exit_ = ir.Block(
+        operations=[ir.Yield((result,)) if nested else ir.Return((result,))]
+    )
+    start.operations.append(ir.Branch(exit_))
+    body = ir.Region([start, exit_])
+    condition = value(2, ir.ScalarType.BOOL)
+    if nested:
+        body = ir.Region(
+            [
+                ir.Block(
+                    (condition, captured),
+                    [
+                        ir.If(
+                            (result,),
+                            condition,
+                            body,
+                            ir.Region([ir.Block(operations=[ir.Yield((captured,))])]),
+                        ),
+                        ir.Return((result,)),
+                    ],
+                )
+            ]
+        )
+        # Nested call and outer If must define distinct IDs.
+        start.operations[0] = ir.Call("forever", (), (value(3),))
+        start.operations[1] = ir.UnknownOp("unreachable", (value(3),), ())
+        exit_.operations = [ir.Yield((value(3),))]
+    caller = ir.Function(
+        "caller",
+        ir.FunctionType(
+            (condition.type, captured.type) if nested else (), (result.type,)
+        ),
+        body,
+    )
+    original = verify.module(ir.Module(functions=[helper, caller]))
+    snapshot = pickle.dumps(original)
+    updated = optimizations.inline_functions(original)
+    optimized = named(updated, "caller")
+    assert optimized.body is not None
+    assert not any(
+        isinstance(op, (ir.Call, ir.UnknownOp)) for op in ir.iter_ops(optimized.body)
+    )
+    assert pickle.dumps(original) == snapshot
+    assert optimizations.inline_functions(updated) is updated
+
+
+def test_cfg_inlining_keeps_selection_and_size_limits() -> None:
+    x = value(0)
+    exit_ = ir.Block(operations=[ir.Return((x,))])
+    helper = ir.Function(
+        "helper",
+        ir.FunctionType((x.type,), (x.type,)),
+        ir.Region([ir.Block((x,), [ir.Branch(exit_)]), exit_]),
+    )
+    result = value(1)
+    caller = function(
+        "caller", (x,), [ir.Call("helper", (x,), (result,)), ir.Return((result,))]
+    )
+    module = verify.module(ir.Module(functions=[helper, caller]))
+    assert optimizations.inline_functions(module, max_callee_ops=1) is module
+    assert optimizations.inline_functions(module, callees={"caller"}) is module
+    updated = optimizations.inline_functions(
+        module, max_callee_ops=2, callees={"helper"}
+    )
+    assert calls(named(updated, "caller")) == []
+    assert evaluate(updated, "caller", (9,)) == ((9,), [])
+
+
+def test_nonreturning_inlining_removes_dead_recursion_to_a_fixed_point() -> None:
+    loop = ir.Block()
+    loop.operations = [ir.Branch(loop)]
+    forever = ir.Function(
+        "forever",
+        ir.FunctionType((), ()),
+        ir.Region(
+            [
+                ir.Block(operations=[ir.Branch(loop)]),
+                loop,
+            ]
+        ),
+    )
+    recursive = function(
+        "recursive",
+        (),
+        [ir.Call("forever", (), ()), ir.Call("recursive", (), ()), ir.Return()],
+    )
+    caller = function("caller", (), [ir.Call("recursive", (), ()), ir.Return()])
+    original = verify.module(ir.Module(functions=[caller, recursive, forever]))
+    updated = optimizations.inline_functions(original)
+    assert calls(named(updated, "recursive")) == []
+    assert calls(named(updated, "caller")) == []
     assert optimizations.inline_functions(updated) is updated

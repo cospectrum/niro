@@ -9,7 +9,7 @@ from hypothesis.strategies import DrawFn
 
 from niro import ir, optimizations, verify
 
-from .strategies import mixed_modules
+from .strategies import mixed_modules, with_control_flow
 
 
 @st.composite
@@ -72,7 +72,7 @@ def modules(draw: DrawFn) -> ir.VerifiedModule:
         ),
         ir.Region([ir.Block((argument, condition), operations)]),
     )
-    return verify.module(ir.Module(functions=[function]))
+    return verify.module(ir.Module(functions=[with_control_flow(draw, function)]))
 
 
 def evaluate(
@@ -95,32 +95,58 @@ def evaluate(
     }
 
     def run(
-        block: ir.Block, scope: dict[ir.ValueId, dict[tuple[int, ...], int]]
+        block: ir.Block,
+        scope: dict[ir.ValueId, dict[tuple[int, ...], int]],
+        flags: dict[ir.ValueId, bool],
     ) -> tuple[dict[tuple[int, ...], int], ...]:
-        for op in block.operations:
-            if isinstance(op, (ir.Return, ir.Yield)):
-                return tuple(scope[value.id] for value in op.operands)
-            if isinstance(op, ir.If):
-                region = op.then_region if condition else op.else_region
-                results = run(region.blocks[0], dict(scope))
-                scope.update(
-                    (v.id, r) for v, r in zip(op.results, results, strict=True)
-                )
-                continue
-            if isinstance(op, ir.Add):
+        for _ in range(10000):
+            for op in block.operations:
+                if isinstance(op, (ir.Branch, ir.CondBranch)):
+                    if isinstance(op, ir.Branch):
+                        target, arguments = op.target, op.arguments
+                    elif flags[op.condition.id]:
+                        target, arguments = op.true_target, op.true_arguments
+                    else:
+                        target, arguments = op.false_target, op.false_arguments
+                    # The generator adds boolean loop arguments only.
+                    passed = tuple(flags[v.id] for v in arguments)
+                    flags.update(
+                        (v.id, flag)
+                        for v, flag in zip(target.arguments, passed, strict=True)
+                    )
+                    block = target
+                    break
+                if isinstance(op, ir.Const):
+                    assert isinstance(op.literal, bool)
+                    flags[op.result.id] = op.literal
+                    continue
+                if isinstance(op, (ir.Return, ir.Yield)):
+                    return tuple(scope[value.id] for value in op.operands)
+                if isinstance(op, ir.If):
+                    region = (
+                        op.then_region if flags[op.condition.id] else op.else_region
+                    )
+                    results = run(region.blocks[0], dict(scope), dict(flags))
+                    scope.update(
+                        (v.id, r) for v, r in zip(op.results, results, strict=True)
+                    )
+                    continue
+                if isinstance(op, ir.Add):
+                    scope[op.result.id] = {
+                        index: value + scope[op.rhs.id][index]
+                        for index, value in scope[op.lhs.id].items()
+                    }
+                    continue
+                assert isinstance(op, ir.Transpose)
                 scope[op.result.id] = {
-                    index: value + scope[op.rhs.id][index]
-                    for index, value in scope[op.lhs.id].items()
+                    tuple(index[axis] for axis in op.permutation): value
+                    for index, value in scope[op.operand.id].items()
                 }
-                continue
-            assert isinstance(op, ir.Transpose)
-            scope[op.result.id] = {
-                tuple(index[axis] for axis in op.permutation): value
-                for index, value in scope[op.operand.id].items()
-            }
-        raise AssertionError("missing terminator")
+            else:
+                raise AssertionError("missing terminator")
+        raise AssertionError("execution step limit exceeded")
 
-    return run(block, tensors)
+    return run(block, tensors, {block.arguments[1].id: condition})
 
 
 @hypothesis.given(modules())

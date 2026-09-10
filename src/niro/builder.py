@@ -187,7 +187,7 @@ class FunctionRegionBuilder(Builder[Region]):
 
 
 class IfRegionBuilder(Builder[Region]):
-    """Builder for an If branch containing a single argument-free block.
+    """Builder for an If region with an argument-free entry and optional CFG.
 
     Attributes:
         raw: The [`niro.ir.Region`][] under construction.
@@ -198,11 +198,13 @@ class IfRegionBuilder(Builder[Region]):
         self._ctx = ctx
         self.raw: Region = region
 
-    def block(self) -> BlockBuilder:
-        """Create the branch's only block, without arguments."""
-        if self.raw.blocks:
-            raise ValueError("if region already has a block")
-        block = ir.Block()
+    def block(self, arg_types: Sequence[Type] = ()) -> BlockBuilder:
+        """Append a block, requiring the first block to have no arguments."""
+        if not self.raw.blocks and arg_types:
+            raise ValueError("if region entry block cannot have arguments")
+        block = ir.Block(
+            arguments=tuple(self._ctx.new_value(type) for type in arg_types)
+        )
         builder = BlockBuilder(self._ctx, block)
         self.raw.blocks.append(block)
         return builder
@@ -438,6 +440,61 @@ class BlockBuilder(Builder[Block]):
 
         op = self._append_operation(result_types, create)
         return op.results
+
+    def branch(self, target: BlockBuilder | Block, *arguments: Value) -> None:
+        """Append a jump to a block in this region, passing its arguments.
+
+        Accept a block builder or raw block. Verification checks destination
+        membership and argument types after construction is complete.
+
+        Examples:
+            Build a two-block identity function:
+
+            ```python
+            from niro import builder, ir
+
+            module = builder.ModuleBuilder()
+            function = module.function(
+                name="identity",
+                type=ir.FunctionType((ir.ScalarType.I32,), (ir.ScalarType.I32,)),
+            )
+            body = function.region()
+            entry = body.first_block()
+            exit_block = body.block((ir.ScalarType.I32,))
+            entry.branch(exit_block, *entry.raw.arguments)
+            exit_block.return_(*exit_block.raw.arguments)
+            module.verify()
+            ```
+        """
+        destination = target.raw if isinstance(target, BlockBuilder) else target
+        self.raw.operations.append(ir.Branch(destination, arguments))
+
+    def cond_branch(
+        self,
+        condition: Value,
+        true_target: BlockBuilder | Block,
+        false_target: BlockBuilder | Block,
+        true_arguments: Sequence[Value] = (),
+        false_arguments: Sequence[Value] = (),
+    ) -> None:
+        """Append a conditional jump with separate argument tuples for each edge.
+
+        Accept block builders or raw blocks in the current region. Verification
+        checks the scalar boolean condition, destinations, and argument types.
+        """
+        self.raw.operations.append(
+            ir.CondBranch(
+                condition,
+                true_target.raw
+                if isinstance(true_target, BlockBuilder)
+                else true_target,
+                false_target.raw
+                if isinstance(false_target, BlockBuilder)
+                else false_target,
+                tuple(true_arguments),
+                tuple(false_arguments),
+            )
+        )
 
     def return_(self, *operands: Value) -> None:
         """Terminate the block by returning values from the function."""
