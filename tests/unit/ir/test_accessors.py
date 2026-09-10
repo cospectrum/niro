@@ -1,7 +1,143 @@
+import pytest
+
 from niro import ir
 
 Operands = tuple[ir.Value, ...]
 Results = tuple[ir.Value, ...]
+
+
+def test_get_definition_finds_arguments_and_results_in_nested_regions() -> None:
+    condition = ir.Value(ir.ValueId(0), ir.ScalarType.BOOL)
+    argument, nested_argument, first, second, result, else_value = (
+        ir.Value(ir.ValueId(index), ir.ScalarType.F32) for index in range(1, 7)
+    )
+    call = ir.Call("callee", (argument,), (first, second))
+    inner = ir.Block(arguments=(nested_argument,), operations=[call])
+    nested = ir.If((), condition, ir.Region([inner]), ir.Region())
+    else_op = ir.Const(else_value, 1.0)
+    branch = ir.If(
+        (result,),
+        condition,
+        ir.Region([ir.Block(operations=[nested])]),
+        ir.Region([ir.Block(operations=[else_op])]),
+    )
+    entry = ir.Block(arguments=(condition, argument), operations=[branch])
+    function = ir.Function("f", ir.FunctionType((), ()), ir.Region([entry]))
+
+    for value, owner, index in (
+        (condition, entry, 0),
+        (argument, entry, 1),
+        (nested_argument, inner, 0),
+    ):
+        definition = ir.get_definition(function, value.id)
+        assert isinstance(definition, ir.BlockArgument)
+        assert definition.owner is owner
+        assert definition.argument_index == index
+        assert owner.arguments[index] is value
+    for value, op, index in (
+        (first, call, 0),
+        (second, call, 1),
+        (result, branch, 0),
+        (else_value, else_op, 0),
+    ):
+        definition = ir.get_definition(function, value.id)
+        assert isinstance(definition, ir.OpResult)
+        assert definition.owner is op
+        assert definition.result_index == index
+        assert ir.get_results(op)[index] is value
+    assert ir.get_definition(function, ir.ValueId(99)) is None
+
+
+def test_iter_uses_reports_operand_slots_in_nested_traversal_order() -> None:
+    condition = ir.Value(ir.ValueId(0), ir.ScalarType.BOOL)
+    value = ir.Value(ir.ValueId(1), ir.ScalarType.F32)
+    reference = ir.Value(value.id, value.type)
+    assert reference is not value
+    result = ir.Value(ir.ValueId(2), value.type)
+    add = ir.Add(result, reference, reference)
+    then_yield = ir.Yield((value,))
+    else_yield = ir.Yield((reference,))
+    branch = ir.If(
+        (),
+        condition,
+        ir.Region([ir.Block(operations=[add, then_yield])]),
+        ir.Region([ir.Block(operations=[else_yield])]),
+    )
+    ret = ir.Return((value,))
+    function = ir.Function(
+        "f",
+        ir.FunctionType((), ()),
+        ir.Region(
+            [
+                ir.Block(arguments=(condition, value), operations=[branch]),
+                ir.Block(operations=[ret]),
+            ]
+        ),
+    )
+
+    expected = [(add, 0), (add, 1), (then_yield, 0), (else_yield, 0), (ret, 0)]
+    for use, (op, index) in zip(
+        ir.iter_uses(function, value.id), expected, strict=True
+    ):
+        assert use.owner is op
+        assert use.operand_index == index
+    condition_uses = list(ir.iter_uses(function, condition.id))
+    assert len(condition_uses) == 1
+    assert condition_uses[0].owner is branch
+    assert condition_uses[0].operand_index == 0
+    assert list(ir.iter_uses(function, result.id)) == []
+    assert list(ir.iter_uses(function, ir.ValueId(99))) == []
+
+
+def test_get_parent_block_matches_identity_in_nested_regions() -> None:
+    condition = ir.Value(ir.ValueId(0), ir.ScalarType.BOOL)
+    first, second, absent = ir.Yield(), ir.Yield(), ir.Yield()
+    assert first == second == absent
+    then_block = ir.Block(operations=[first])
+    else_block = ir.Block(operations=[second])
+    nested = ir.If((), condition, ir.Region([then_block]), ir.Region([else_block]))
+    outer = ir.If(
+        (), condition, ir.Region([ir.Block(operations=[nested])]), ir.Region()
+    )
+    entry = ir.Block(operations=[outer])
+    ret = ir.Return()
+    last = ir.Block(operations=[ret])
+    function = ir.Function("f", ir.FunctionType((), ()), ir.Region([entry, last]))
+
+    assert ir.get_parent_block(function, outer) is entry
+    assert ir.get_parent_block(function, nested) is outer.then_region.blocks[0]
+    assert ir.get_parent_block(function, first) is then_block
+    assert ir.get_parent_block(function, second) is else_block
+    assert ir.get_parent_block(function, ret) is last
+    assert ir.get_parent_block(function, absent) is None
+
+
+@pytest.mark.parametrize("body", [None, ir.Region(), ir.Region([ir.Block()])])
+def test_function_accessors_handle_absent_or_empty_bodies(
+    body: ir.Region | None,
+) -> None:
+    function = ir.Function("f", ir.FunctionType((), ()), body)
+    assert ir.get_definition(function, ir.ValueId(0)) is None
+    assert list(ir.iter_uses(function, ir.ValueId(0))) == []
+    assert ir.get_parent_block(function, ir.Return()) is None
+
+
+def test_value_lookups_are_function_local_and_do_not_require_a_definition() -> None:
+    value = ir.Value(ir.ValueId(0), ir.ScalarType.F32)
+    const = ir.Const(value, 1.0)
+    ret = ir.Return((value,))
+    defining = ir.Function(
+        "defining", ir.FunctionType((), ()), ir.Region([ir.Block(operations=[const])])
+    )
+    using = ir.Function(
+        "using", ir.FunctionType((), ()), ir.Region([ir.Block(operations=[ret])])
+    )
+
+    assert ir.get_definition(defining, value.id) == ir.OpResult(const, 0)
+    assert ir.get_definition(using, value.id) is None
+    assert list(ir.iter_uses(defining, value.id)) == []
+    assert list(ir.iter_uses(using, value.id)) == [ir.Use(ret, 0)]
+    assert ir.get_parent_block(using, const) is None
 
 
 def test_operations_expose_generic_operands_and_results() -> None:
@@ -185,6 +321,43 @@ def test_iter_defined_values_ignores_operand_only_references() -> None:
         ir.Region([ir.Block(operations=[ir.Return((external,))])]),
     ):
         assert list(ir.iter_defined_values(region)) == []
+
+
+def test_iter_blocks_preserves_depth_first_order_and_identity() -> None:
+    condition = ir.Value(ir.ValueId(0), ir.ScalarType.BOOL)
+    leaf_then, leaf_else, outer_else, sibling, last = (ir.Block() for _ in range(5))
+    nested = ir.If((), condition, ir.Region([leaf_then]), ir.Region([leaf_else]))
+    then_block = ir.Block(operations=[nested])
+    outer = ir.If(
+        (), condition, ir.Region([then_block, sibling]), ir.Region([outer_else])
+    )
+    next_block = ir.Block()
+    next_op = ir.If((), condition, ir.Region(), ir.Region([next_block]))
+    entry = ir.Block(operations=[outer, next_op])
+    region = ir.Region([entry, last])
+
+    expected = [
+        entry,
+        then_block,
+        leaf_then,
+        leaf_else,
+        sibling,
+        outer_else,
+        next_block,
+        last,
+    ]
+    assert all(
+        actual is block
+        for actual, block in zip(ir.iter_blocks(region), expected, strict=True)
+    )
+
+
+def test_iter_blocks_handles_empty_regions_and_blocks() -> None:
+    assert list(ir.iter_blocks(ir.Region())) == []
+    block = ir.Block()
+    blocks = list(ir.iter_blocks(ir.Region([block])))
+    assert len(blocks) == 1
+    assert blocks[0] is block
 
 
 def test_iter_ops_preserves_depth_first_order_and_identity() -> None:

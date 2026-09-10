@@ -6,11 +6,19 @@ You can construct programs with [`niro.builder.ModuleBuilder`][].
 
 from niro.ir import infer
 from niro.ir.accessors import (
+    BlockArgument,
+    Definition,
+    OpResult,
+    Use,
+    get_definition,
     get_operands,
+    get_parent_block,
     get_regions,
     get_results,
+    iter_blocks,
     iter_defined_values,
     iter_ops,
+    iter_uses,
 )
 from niro.ir.data import AttributeName, Attributes, AttributeValue, Literal
 from niro.ir.ops import (
@@ -46,8 +54,10 @@ __all__ = [
     "AttributeValue",
     "Attributes",
     "Block",
+    "BlockArgument",
     "Call",
     "Const",
+    "Definition",
     "Dimension",
     "Function",
     "FunctionType",
@@ -59,6 +69,7 @@ __all__ = [
     "Module",
     "Mul",
     "Op",
+    "OpResult",
     "Region",
     "Return",
     "ScalarType",
@@ -68,14 +79,19 @@ __all__ = [
     "Transpose",
     "Type",
     "UnknownOp",
+    "Use",
     "Value",
     "ValueId",
     "VerifiedModule",
     "Yield",
+    "get_definition",
     "get_operands",
+    "get_parent_block",
     "get_regions",
     "get_results",
     "infer",
+    "iter_blocks",
     "iter_defined_values",
     "iter_ops",
+    "iter_uses",
 ]

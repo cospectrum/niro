@@ -46,7 +46,9 @@ including `README.md` and `docs/index.md`. Keep shared content consistent.
 Keep [docs/ir.md](docs/ir.md) language agnostic: it defines the IR's concepts,
 structure, semantics, and validity rules. Do not add implementation details such
 as Python dataclasses, inheritance, runtime validation mechanisms, or accessor
-APIs. Document the Python API in docstrings and `docs/niro/ir/` instead.
+APIs. Document the Python API, including explanations and examples, in source
+docstrings. Keep pages under `docs/niro/` limited to API reference directives and
+their rendering options; do not add handwritten prose or examples there.
 
 Preview the documentation with Zensical while editing it:
 
