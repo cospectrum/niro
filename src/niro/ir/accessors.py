@@ -15,11 +15,6 @@ Owners are references to existing IR objects; the records do not copy values.
 Records refer to positions in the current IR; repeat the query after edits that
 change those positions.
 
-For repeated queries over unchanged IR, build a
-[`FunctionIndex`][niro.index.FunctionIndex] with
-[`index_function`][niro.index.index_function] and query its tables directly.
-These accessors always scan the current IR and do not maintain an index.
-
 Examples:
     Locate definitions, uses, and the containing block of an addition:
 

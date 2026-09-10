@@ -1,10 +1,10 @@
-"""A pass that leaves the indexed module unchanged."""
+"""A pass that leaves the module unchanged."""
 
-from niro.index import ModuleIndex
+from niro.ir import VerifiedModule
 
 __all__ = ["noop"]
 
 
-def noop(indexed: ModuleIndex) -> ModuleIndex:
-    """Return the input index unchanged, preserving the module and all lookup tables."""
-    return indexed
+def noop(module: VerifiedModule) -> VerifiedModule:
+    """Return the input module unchanged."""
+    return module

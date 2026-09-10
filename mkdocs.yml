@@ -20,7 +20,6 @@ nav:
               - program: niro/ir/program.md
               - ops: niro/ir/ops.md
               - data: niro/ir/data.md
-          - index: niro/indexing.md
           - builder: niro/builder.md
           - rewrite: niro/rewrite.md
           - passes: niro/passes.md
