@@ -55,6 +55,36 @@ def test_operator_subsets(operator: str, data: st.DataObject) -> None:
     assert_valid_and_executable(model)
 
 
+@pytest.mark.parametrize(
+    "operator",
+    [
+        onnx_strategies.unary("Neg"),
+        onnx_strategies.broadcast_binary("Sub"),
+        onnx_strategies.broadcast_binary(
+            "Less", output_element_type=onnx.TensorProto.BOOL
+        ),
+    ],
+    ids=("unary", "binary", "comparison"),
+)
+@hypothesis.settings(max_examples=40)
+@hypothesis.given(data=st.data())
+def test_operator_family_extensions(
+    operator: onnx_strategies.Operator, data: st.DataObject
+) -> None:
+    model = data.draw(
+        onnx_strategies.models(
+            operators=(operator,),
+            min_nodes=1,
+            max_nodes=5,
+            max_initializers=0,
+            element_types=(onnx.TensorProto.FLOAT, onnx.TensorProto.INT32),
+        )
+    )
+    assert 1 <= len(model.graph.node) <= 5
+    assert {node.op_type for node in model.graph.node} == {operator.op_type}
+    assert_valid_and_executable(model)
+
+
 @hypothesis.given(
     data=st.data(),
     max_nodes=st.integers(0, 5),
@@ -119,6 +149,10 @@ def test_models_without_nodes(model: onnx.ModelProto) -> None:
         onnx_strategies.models(max_outputs=0),
         onnx_strategies.models(max_rank=-1),
         onnx_strategies.models(max_dim=-1),
+        onnx_strategies.models(min_nodes=-1),
+        onnx_strategies.models(min_nodes=2, max_nodes=1),
+        onnx_strategies.models(max_seed_initializers=-1),
+        onnx_strategies.models(max_seed_initializers=4, max_initializers=3),
     ],
 )
 @hypothesis.given(data=st.data())
@@ -139,3 +173,42 @@ def test_invalid_subsets_and_missing_sources(data: st.DataObject) -> None:
         data.draw(onnx_strategies.models(element_types=()))
     with pytest.raises(ValueError, match="element_types"):
         data.draw(onnx_strategies.models(element_types=(onnx.TensorProto.STRING,)))
+
+
+@hypothesis.given(data=st.data())
+def test_unreachable_minimum_nodes(data: st.DataObject) -> None:
+    with pytest.raises(ValueError, match="cannot satisfy min_nodes"):
+        data.draw(onnx_strategies.models(operators=(), min_nodes=1))
+
+
+@hypothesis.given(data=st.data())
+def test_missing_domain_import(data: st.DataObject) -> None:
+    operator = onnx_strategies.Operator("Example", lambda _: None, domain="example")
+    with pytest.raises(ValueError, match="missing opset import"):
+        data.draw(onnx_strategies.models(operators=(operator,)))
+
+
+@hypothesis.given(data=st.data(), version=st.sampled_from((14, 15, 18, 21)))
+def test_opsets_determine_ir_version(data: st.DataObject, version: int) -> None:
+    model = data.draw(
+        onnx_strategies.models(
+            operators=("Identity",),
+            min_nodes=1,
+            max_nodes=2,
+            opsets={"": version},
+        )
+    )
+    assert model.ir_version == onnx.helper.find_min_ir_version_for(model.opset_import)
+    assert_valid_and_executable(model)
+
+
+@hypothesis.given(data=st.data())
+def test_rejects_incompatible_versions(data: st.DataObject) -> None:
+    with pytest.raises(ValueError, match="versions must be positive"):
+        data.draw(onnx_strategies.models(opsets={"": 0}))
+    with pytest.raises(ValueError, match="require IR version"):
+        data.draw(onnx_strategies.models(opsets={"": 15}, ir_version=7))
+    with pytest.raises(ValueError, match="require ONNX opset"):
+        data.draw(onnx_strategies.models(opsets={"": 13}, min_nodes=1))
+    with pytest.raises(ValueError, match="Unsupported opset-version"):
+        data.draw(onnx_strategies.models(opsets={"": 999}))
