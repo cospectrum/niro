@@ -14,7 +14,7 @@ from niro import ir, verify
 
 from ..strategies import onnx as graphs
 
-# ONNX op name -> Niro op type.
+# ONNX op name -> Niro op type, used only for comparison in tests.
 _SUPPORTED_OP_TYPES: dict[str, type[ir.Op]] = {
     "Add": ir.Add,
     "Mul": ir.Mul,
@@ -84,7 +84,9 @@ def _assert_import_matches_graph(module: ir.Module, graph: onnx.GraphProto) -> N
             values[operation.name] = operation.result
             continue
         node = next(nodes)
-        assert isinstance(operation, _SUPPORTED_OP_TYPES.get(node.op_type, ir.UnknownOp))
+        assert isinstance(
+            operation, _SUPPORTED_OP_TYPES.get(node.op_type, ir.UnknownOp)
+        )
         assert ir.get_operands(operation) == tuple(values[name] for name in node.input)
         results = ir.get_results(operation)
         assert tuple(result.type for result in results) == tuple(
@@ -112,8 +114,8 @@ def _assert_import_matches_graph(module: ir.Module, graph: onnx.GraphProto) -> N
 def _unknown_operators() -> tuple[graphs.Operator, ...]:
     """Return generation rules for operators imported as UnknownOp."""
     return (
-        graphs.OPERATORS["Identity"],
-        graphs.OPERATORS["Relu"],
+        graphs.OPERATORS.identity,
+        graphs.OPERATORS.relu,
         graphs.unary("Neg"),
         graphs.broadcast_binary("Sub"),
         graphs.broadcast_binary("Less", output_element_type=onnx.TensorProto.BOOL),
@@ -127,7 +129,7 @@ def _native_operators() -> tuple[graphs.Operator, ...]:
         graphs.Operator("Add", _same_type_binary),
         graphs.Operator("Mul", _same_type_binary),
         graphs.Operator("MatMul", _matrix_multiply),
-        graphs.OPERATORS["Transpose"],
+        graphs.OPERATORS.transpose,
     )
 
 
@@ -154,7 +156,7 @@ def _matrix_multiply(context: graphs.Context) -> SearchStrategy[graphs.NodeSpec]
     matrices = tuple(
         value for value in context.values if len(graphs.tensor_shape(value)) == 2
     )
-    return graphs.OPERATORS["MatMul"].strategy(
+    return graphs.OPERATORS.matmul.strategy(
         dataclasses.replace(context, values=matrices)
     )
 

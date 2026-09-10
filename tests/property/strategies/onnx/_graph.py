@@ -105,15 +105,16 @@ def _resolve_operators(
 ) -> tuple[Operator, ...]:
     """Resolve registered names while allowing independent caller-supplied rules."""
     if operators is None:
-        return tuple(OPERATORS.values())
+        return tuple(OPERATORS)
+    registry = {operator.op_type: operator for operator in OPERATORS}
     resolved = []
     for operator in operators:
         if isinstance(operator, str):
-            if operator not in OPERATORS:
+            if operator not in registry:
                 raise ValueError(
                     f"unsupported operators: {operator!r}; supply an Operator rule"
                 )
-            operator = OPERATORS[operator]
+            operator = registry[operator]
         resolved.append(operator)
     return tuple(resolved)
 

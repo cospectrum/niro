@@ -1,7 +1,10 @@
 # ONNX model strategies
 
 `models()` builds bounded ONNX graphs with Hypothesis. The default registry,
-`OPERATORS`, contains Add, Mul, MatMul, Transpose, Identity, and Relu. Pass an
+`OPERATORS`, contains Add, Mul, MatMul, Transpose, Identity, and Relu. Its frozen
+fields provide type-checked access, such as `OPERATORS.matmul`. Iteration and
+string lookup derive from those fields, so adding a default rule requires one
+field declaration. String selection in `models()` remains supported. Pass an
 `Operator` directly to add a generation rule without changing the registry:
 
 ```python

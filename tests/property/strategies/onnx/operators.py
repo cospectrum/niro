@@ -1,12 +1,13 @@
 """Operator-specific rules and factories for common tensor semantics.
 
-Add a default rule to OPERATORS, or pass an Operator directly to models().
+Declare default rules as registry fields, or pass an Operator directly to models().
 Unrelated signatures need only implement the Context-to-NodeSpec contract;
 graph assembly has no operator-specific branches.
 """
 
+import dataclasses
 import itertools
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 
 import onnx
 from hypothesis import strategies as st
@@ -217,11 +218,27 @@ def _transpose(context: Context) -> SearchStrategy[NodeSpec] | None:
     return _transposes(values)
 
 
-OPERATORS: dict[str, Operator] = {
-    "Add": broadcast_binary("Add"),
-    "Mul": broadcast_binary("Mul"),
-    "MatMul": Operator("MatMul", _matmul),
-    "Transpose": Operator("Transpose", _transpose),
-    "Identity": unary("Identity", element_types=ELEMENT_TYPES),
-    "Relu": unary("Relu"),
-}
+@dataclasses.dataclass(frozen=True)
+class _OperatorRegistry:
+    """Default rules with type-checked fields and iteration in declaration order."""
+
+    add: Operator = dataclasses.field(default_factory=lambda: broadcast_binary("Add"))
+    mul: Operator = dataclasses.field(default_factory=lambda: broadcast_binary("Mul"))
+    matmul: Operator = dataclasses.field(
+        default_factory=lambda: Operator("MatMul", _matmul)
+    )
+    transpose: Operator = dataclasses.field(
+        default_factory=lambda: Operator("Transpose", _transpose)
+    )
+    identity: Operator = dataclasses.field(
+        default_factory=lambda: unary("Identity", element_types=ELEMENT_TYPES)
+    )
+    relu: Operator = dataclasses.field(default_factory=lambda: unary("Relu"))
+
+    def __iter__(self) -> Iterator[Operator]:
+        """Yield each declared rule without maintaining a separate operator list."""
+        for field in dataclasses.fields(self):
+            yield getattr(self, field.name)
+
+
+OPERATORS = _OperatorRegistry()

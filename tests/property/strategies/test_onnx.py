@@ -46,7 +46,9 @@ def test_models_are_valid_and_executable(model: onnx.ModelProto) -> None:
         hypothesis.event(f"operator={operator}")
 
 
-@pytest.mark.parametrize("operator", onnx_strategies.OPERATORS)
+@pytest.mark.parametrize(
+    "operator", [rule.op_type for rule in onnx_strategies.OPERATORS]
+)
 @hypothesis.settings(max_examples=40)
 @hypothesis.given(data=st.data())
 def test_operator_subsets(operator: str, data: st.DataObject) -> None:
