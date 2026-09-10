@@ -35,10 +35,6 @@ Inspect a model's entry-point signature:
 niro inspect signature model.onnx
 ```
 
-The Python API includes [`niro.rewrite`](niro/rewrite.md) for functional SSA
-edits: substitute uses, replace or move operations, and clone regions with fresh
-value IDs.
-
 ## Next steps
 
 - [IR specification](ir.md) — the types, values, and operations Niro compiles through.
