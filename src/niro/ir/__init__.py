@@ -46,7 +46,7 @@ from niro.ir.program import (
     VerifiedModule,
 )
 from niro.ir.types import Dimension, ScalarType, Shape, TensorType, Type
-from niro.ir.values import Value, ValueId
+from niro.ir.values import Value, ValueId, ValueSupply
 
 __all__ = [
     "Add",
@@ -82,6 +82,7 @@ __all__ = [
     "Use",
     "Value",
     "ValueId",
+    "ValueSupply",
     "VerifiedModule",
     "Yield",
     "get_definition",

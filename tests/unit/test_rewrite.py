@@ -302,7 +302,7 @@ def test_invalid_insert_point(index: int) -> None:
         rewrite.InsertPoint(ir.Block(operations=[ir.Return()]), index)
 
 
-def test_fresh_supply_includes_nested_definitions_and_is_functional() -> None:
+def test_fresh_supply_includes_nested_definitions() -> None:
     condition = value(0, ir.ScalarType.BOOL)
     branch = ir.If(
         (),
@@ -312,11 +312,9 @@ def test_fresh_supply_includes_nested_definitions_and_is_functional() -> None:
     )
     original = function(ir.Block((condition,), [branch, ir.Return()]))
     supply = rewrite.value_supply(original)
-    first, advanced = rewrite.fresh_value(supply, ir.ScalarType.F32)
-    second, final = rewrite.fresh_value(advanced, ir.ScalarType.I32)
-    assert (first.id, second.id, final.next_id, supply.next_id) == (101, 102, 103, 101)
-    with pytest.raises(ValueError, match="nonnegative"):
-        rewrite.ValueSupply(-1)
+    first = supply.fresh(ir.ScalarType.F32)
+    second = supply.fresh(ir.ScalarType.I32)
+    assert (first.id, second.id, supply.next_id) == (101, 102, 103)
 
 
 def test_clone_freshens_arguments_results_and_nested_definitions() -> None:
@@ -331,9 +329,8 @@ def test_clone_freshens_arguments_results_and_nested_definitions() -> None:
     region = ir.Region([ir.Block((a, b), [branch, ir.Return((result,))])])
     snapshot = copy.deepcopy(region)
     capture = value(50)
-    cloned, mapping, supply = rewrite.clone_region(
-        region, rewrite.ValueSupply(100), captures={x.id: capture}
-    )
+    supply = ir.ValueSupply(100)
+    cloned, mapping = rewrite.clone_region(region, supply, captures={x.id: capture})
     assert set(mapping) == {a.id, b.id, result.id, local.id}
     assert len({v.id for v in mapping.values()}) == 4
     assert supply.next_id == 104
@@ -372,7 +369,7 @@ def test_clone_supports_all_op_interfaces_and_multiple_results() -> None:
             )
         ]
     )
-    cloned, mapping, _ = rewrite.clone_region(region, rewrite.ValueSupply(20))
+    cloned, mapping = rewrite.clone_region(region, ir.ValueSupply(20))
     for original, copied in zip(ir.iter_ops(region), ir.iter_ops(cloned), strict=True):
         assert type(copied) is type(original)
         assert ir.get_operands(copied) == tuple(
@@ -390,10 +387,10 @@ def test_clone_rejects_collisions_invalid_captures_and_duplicate_definitions() -
     x, result = value(10), value(0)
     region = ir.Region([ir.Block(operations=[ir.Add(result, x, x)])])
     for supply, captures, message in [
-        (rewrite.ValueSupply(10), {}, "collides"),
-        (rewrite.ValueSupply(20), {result.id: x}, "region definition"),
+        (ir.ValueSupply(10), {}, "collides"),
+        (ir.ValueSupply(20), {result.id: x}, "region definition"),
         (
-            rewrite.ValueSupply(20),
+            ir.ValueSupply(20),
             {x.id: value(30, ir.ScalarType.F32)},
             "types do not match",
         ),
@@ -402,7 +399,7 @@ def test_clone_rejects_collisions_invalid_captures_and_duplicate_definitions() -
             rewrite.clone_region(region, supply, captures=captures)
     duplicate = ir.Region([ir.Block((result,), [ir.Const(result, 1)])])
     with pytest.raises(ValueError, match="duplicate definition"):
-        rewrite.clone_region(duplicate, rewrite.ValueSupply(20))
+        rewrite.clone_region(duplicate, ir.ValueSupply(20))
 
 
 def test_inline_using_clone_and_replace() -> None:
@@ -414,7 +411,7 @@ def test_inline_using_clone_and_replace() -> None:
     caller = function(block)
     # Clone the callee's operations as a fragment: its parameters become captures.
     fragment = ir.Region([ir.Block(operations=operations(callee))])
-    cloned, mapping, _ = rewrite.clone_region(
+    cloned, mapping = rewrite.clone_region(
         fragment, rewrite.value_supply(caller), captures={arg.id: x}
     )
     updated = rewrite.replace_ops(
@@ -476,7 +473,8 @@ def test_empty_fragments_and_external_functions() -> None:
     with pytest.raises(ValueError, match="not defined"):
         rewrite.replace_uses(external, {value(0).id: value(1)})
     region = ir.Region()
-    cloned, mapping, supply = rewrite.clone_region(region, rewrite.ValueSupply(3))
+    supply = ir.ValueSupply(3)
+    cloned, mapping = rewrite.clone_region(region, supply)
     assert cloned == region
     assert mapping == {}
     assert supply.next_id == 3
@@ -492,8 +490,9 @@ def test_unused_replacement_still_requires_a_defined_target() -> None:
 def test_clone_accepts_unused_capture_mappings() -> None:
     local, unused = value(0), value(1)
     region = ir.Region([ir.Block(operations=[ir.Const(local, 1)])])
-    cloned, mapping, supply = rewrite.clone_region(
-        region, rewrite.ValueSupply(10), captures={unused.id: value(20)}
+    supply = ir.ValueSupply(10)
+    cloned, mapping = rewrite.clone_region(
+        region, supply, captures={unused.id: value(20)}
     )
     assert cloned.blocks[0].operations == [ir.Const(mapping[local.id], 1)]
     assert supply.next_id == 11
@@ -508,3 +507,25 @@ def test_shared_target_identity_is_ambiguous() -> None:
     repeated = ir.Function("f", ir.FunctionType((), ()), ir.Region([block, block]))
     with pytest.raises(ValueError, match="occurs more than once"):
         rewrite.insert_ops(repeated, (ir.Return(),), at=rewrite.InsertPoint(block, 0))
+
+
+def test_repeated_cloning_shares_supply_without_duplicate_ids() -> None:
+    local = value(0)
+    region = ir.Region([ir.Block(operations=[ir.Const(local, 1)])])
+    supply = ir.ValueSupply(10)
+    _, first = rewrite.clone_region(region, supply)
+    _, second = rewrite.clone_region(region, supply)
+    assert first[local.id].id == 10
+    assert second[local.id].id == 11
+    assert supply.fresh(ir.ScalarType.I32).id == 12
+
+
+def test_failed_clone_does_not_consume_ids() -> None:
+    first, second, capture = value(0), value(1), value(11)
+    region = ir.Region(
+        [ir.Block(operations=[ir.Const(first, 1), ir.Add(second, first, capture)])]
+    )
+    supply = ir.ValueSupply(10)
+    with pytest.raises(ValueError, match="collides"):
+        rewrite.clone_region(region, supply)
+    assert supply.next_id == 10

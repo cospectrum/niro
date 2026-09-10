@@ -4,6 +4,8 @@ Edits return new IR without mutating their inputs. Unchanged objects and metadat
 may be shared: treat both versions as immutable, even while the IR schema still
 contains mutable containers. Operation targets are matched by identity and
 insertion points refer to the input version; reacquire references after edits.
+Cloning advances the supplied [`ValueSupply`][niro.ir.ValueSupply] on success;
+the source IR is unchanged.
 
 Operation edits check unique definitions, operand references, and replacement
 types. Passes remain responsible for dominance, region scope, terminators, and
@@ -42,14 +44,12 @@ from dataclasses import dataclass
 from typing import assert_never
 
 from niro import ir
-from niro.ir import Block, Function, Op, Region, Type, Use, Value, ValueId
+from niro.ir import Block, Function, Op, Region, Use, Value, ValueId, ValueSupply
 
 __all__ = [
     "InsertPoint",
-    "ValueSupply",
     "clone_region",
     "erase_ops",
-    "fresh_value",
     "insert_ops",
     "map_blocks",
     "map_regions",
@@ -78,22 +78,6 @@ class InsertPoint:
             raise ValueError("insertion index is outside the block")
 
 
-@dataclass(frozen=True, slots=True)
-class ValueSupply:
-    """An immutable source of fresh function-local value IDs.
-
-    Attributes:
-        next_id: Next unused ID. Thread the returned supply through allocations;
-            reusing an old supply would allocate the same IDs again.
-    """
-
-    next_id: int = 0
-
-    def __post_init__(self) -> None:
-        if self.next_id < 0:
-            raise ValueError("next value ID must be nonnegative")
-
-
 def value_supply(function: Function) -> ValueSupply:
     """Create a supply above every definition ID, including nested regions.
 
@@ -110,32 +94,12 @@ def value_supply(function: Function) -> ValueSupply:
         )
         supply = rewrite.value_supply(function)
         assert supply.next_id == 8
+        fresh = supply.fresh(ir.ScalarType.I32)
+        assert fresh.id == 8
         ```
     """
     values = () if function.body is None else ir.iter_defined_values(function.body)
-    return ValueSupply(1 + max((value.id for value in values), default=-1))
-
-
-def fresh_value(supply: ValueSupply, type: Type) -> tuple[Value, ValueSupply]:
-    """Return a fresh typed value and the advanced supply, without changing either input.
-
-    Examples:
-        Thread the returned supply through successive allocations. Allocating a
-        value does not define it; use it as an operation result or block argument:
-
-        ```python
-        from niro import ir, rewrite
-
-        initial = rewrite.ValueSupply(10)
-        first, supply = rewrite.fresh_value(initial, ir.ScalarType.I32)
-        second, supply = rewrite.fresh_value(supply, ir.ScalarType.I32)
-        constant = ir.Const(first, 3)
-        doubled = ir.Add(second, first, first)
-        assert (first.id, second.id, supply.next_id) == (10, 11, 12)
-        assert initial.next_id == 10
-        ```
-    """
-    return ir.Value(ir.ValueId(supply.next_id), type), ValueSupply(supply.next_id + 1)
+    return ir.ValueSupply(1 + max((value.id for value in values), default=-1))
 
 
 def with_operands(op: Op, operands: Sequence[Value]) -> Op:
@@ -464,9 +428,8 @@ def insert_ops(function: Function, ops: Sequence[Op], *, at: InsertPoint) -> Fun
 
         block = ir.Block(operations=[ir.Return()])
         function = ir.Function("empty", ir.FunctionType((), ()), ir.Region([block]))
-        result, supply = rewrite.fresh_value(
-            rewrite.value_supply(function), ir.ScalarType.I32
-        )
+        supply = rewrite.value_supply(function)
+        result = supply.fresh(ir.ScalarType.I32)
         constant = ir.Const(result, 42)
         updated = rewrite.insert_ops(
             function, (constant,), at=rewrite.InsertPoint(block, 0)
@@ -545,20 +508,21 @@ def clone_region(
     supply: ValueSupply,
     *,
     captures: Mapping[ValueId, Value] | None = None,
-) -> tuple[Region, dict[ValueId, Value], ValueSupply]:
+) -> tuple[Region, dict[ValueId, Value]]:
     """Copy a region with fresh IDs for every definition, including nested ones.
 
     Args:
         region: Fragment to copy. Its definition IDs must be unique.
         supply: Fresh IDs from the destination function. Must not collide with
             captured values; use [`value_supply`][niro.rewrite.value_supply].
+            Advanced on success and left unchanged on failure.
         captures: Optional substitutions for values defined outside the region.
             Unmapped captures are preserved. Mapped captures must retain types.
             Unused keys are ignored; keys naming region definitions are rejected.
 
     Returns:
-        The copied region, a map from every original definition ID to its fresh
-        value, and the advanced supply. The map excludes captured values.
+        The copied region and a map from every original definition ID to its
+        fresh value. The map excludes captured values.
 
     Raises:
         ValueError: Definitions repeat, a capture key names a region definition, types
@@ -581,8 +545,9 @@ def clone_region(
             "destination", ir.FunctionType((argument.type,), ()),
             ir.Region([ir.Block((argument,), [ir.Return()])]),
         )
-        copied, values, supply = rewrite.clone_region(
-            branch, rewrite.value_supply(destination), captures={x.id: argument}
+        supply = rewrite.value_supply(destination)
+        copied, values = rewrite.clone_region(
+            branch, supply, captures={x.id: argument}
         )
         fresh_local = values[local.id]
         assert fresh_local.id == 11
@@ -608,9 +573,10 @@ def clone_region(
         if key in free and free[key].type != value.type:
             raise ValueError("replacement types do not match")
     captured_ids = {captures.get(key, value).id for key, value in free.items()}
+    allocated = supply.clone()
     renamed: dict[ir.ValueId, ir.Value] = {}
     for key, value in definitions.items():
-        fresh, supply = fresh_value(supply, value.type)
+        fresh = allocated.fresh(value.type)
         if fresh.id in captured_ids:
             raise ValueError("fresh value ID collides with a captured value")
         renamed[key] = fresh
@@ -635,7 +601,9 @@ def clone_region(
     def clone(body: ir.Region) -> ir.Region:
         return map_blocks(body, clone_block)
 
-    return clone(region), renamed, supply
+    copied = clone(region)
+    supply.next_id = allocated.next_id
+    return copied, renamed
 
 
 def _with_results(op: ir.Op, results: tuple[ir.Value, ...]) -> ir.Op:
