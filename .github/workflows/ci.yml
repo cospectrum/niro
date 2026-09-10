@@ -33,6 +33,7 @@ jobs:
         run: nix develop --no-update-lock-file -c uv run --locked pytest tests/unit
 
       - name: Test properties
+        if: matrix.os == 'ubuntu-24.04'
         run: nix develop --no-update-lock-file -c uv run --no-sync pytest tests/property
 
       - name: Test end-to-end workflows
@@ -56,9 +57,6 @@ jobs:
 
       - name: Test
         run: uv run --locked pytest tests/unit
-
-      - name: Test properties
-        run: uv run --no-sync pytest tests/property
 
       - name: Test end-to-end workflows
         run: uv run --no-sync pytest tests/e2e

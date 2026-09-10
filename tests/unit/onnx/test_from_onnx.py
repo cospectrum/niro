@@ -269,6 +269,33 @@ def test_imports_matmul_and_transpose() -> None:
     assert return_.operands == (matmul_result,)
 
 
+def test_imports_initializer_returned_directly() -> None:
+    weight = helper.make_tensor("weight", TensorProto.FLOAT, [2], [2.0, 3.0])
+    graph = helper.make_graph(
+        nodes=[],
+        name="constant_output",
+        inputs=[],
+        outputs=[onnx_tensor("weight", [2])],
+        initializer=[weight],
+    )
+    model = helper.make_model(graph)
+    onnx.checker.check_model(model, full_check=True)
+
+    module = niro.from_onnx(model)
+
+    function = module.functions[0]
+    assert function.body is not None
+    (block,) = function.body.blocks
+    get_global, return_ = block.operations
+    assert isinstance(get_global, ir.GetGlobal)
+    assert isinstance(return_, ir.Return)
+    assert get_global.name == "weight"
+    assert get_global.result.type == ir.TensorType(ir.ScalarType.F32, (2,))
+    assert return_.operands == (get_global.result,)
+    assert function.input_names == ()
+    assert function.output_names == ("weight",)
+
+
 def test_preserves_node_and_graph_output_order() -> None:
     graph = helper.make_graph(
         nodes=[

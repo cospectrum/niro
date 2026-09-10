@@ -50,8 +50,9 @@ def node_name(node: onnx.NodeProto) -> str:
 def _import_forward(ctx: Ctx, module: builder.ModuleBuilder) -> ir.Function:
     """Build and return the graph entry point, adding it to the module.
 
-    Resolve operands in graph order and load initializers on first use. Inputs
-    must be named and declared graph outputs must match the resulting types.
+    Resolve operands in graph order and load initializers on first use, including
+    those returned directly. Inputs must be named and declared graph outputs
+    must match the resulting types.
     """
     fn = _declare_entry_point(ctx.graph, module)
     input_names = fn.raw.input_names
@@ -87,6 +88,10 @@ def _import_forward(ctx: Ctx, module: builder.ModuleBuilder) -> ir.Function:
         results = (result,) if isinstance(result, ir.Value) else result
         value_table.define_many(node.output, results)
 
+    for output_name in output_names:
+        name = cast(str, output_name)
+        if name not in value_table and name in ctx.weights:
+            value_table.define(name, block.get_global(ctx.weights[name]))
     outputs = [value_table.lookup(cast(str, name)) for name in output_names]
     for output, ty in zip(outputs, fn.raw.type.outputs, strict=True):
         assert output.type == ty
