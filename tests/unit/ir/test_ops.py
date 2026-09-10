@@ -4,12 +4,11 @@ import dataclasses
 
 import pytest
 
-import niro
 from niro import builder, ir, rewrite, verify
 
 
 @pytest.mark.parametrize("shape", [(), (2,), (2, 3)])
-def test_tensor_extract_preserves_input_and_lowers(shape: tuple[int, ...]) -> None:
+def test_tensor_extract_preserves_input(shape: tuple[int, ...]) -> None:
     tensor_type = ir.TensorType(ir.ScalarType.F32, shape)
     module = builder.ModuleBuilder()
     function = module.function(
@@ -21,7 +20,7 @@ def test_tensor_extract_preserves_input_and_lowers(shape: tuple[int, ...]) -> No
     indices = tuple(block.const(0, ir.ScalarType.I64) for _ in shape)
     result = block.tensor_extract(operand, indices)
     block.return_(result, operand)
-    verified = module.verify()
+    module.verify()
     operation = block.raw.operations[-2]
     assert isinstance(operation, ir.TensorExtract)
     assert ir.get_operands(operation) == (operand, *indices)
@@ -32,9 +31,6 @@ def test_tensor_extract_preserves_input_and_lowers(shape: tuple[int, ...]) -> No
     )
     assert copied is not function.raw.body
     assert result.id in mapping
-    text = niro.format_mlir(niro.to_mlir(verified))
-    assert "tensor.extract" in text
-    assert text.count("arith.index_cast") == len(shape)
 
 
 @pytest.mark.parametrize(

@@ -30,6 +30,26 @@ def test_lowers_tensor_add() -> None:
     assert "func.return %2 : tensor<2x2xf32>" in text
 
 
+@pytest.mark.parametrize("shape", [(), (2,), (2, 3)])
+def test_lowers_tensor_extract(shape: tuple[int, ...]) -> None:
+    tensor_type = ir.TensorType(ir.ScalarType.F32, shape)
+    module = builder.ModuleBuilder()
+    function = module.function(
+        name="extract",
+        type=ir.FunctionType((tensor_type,), (ir.ScalarType.F32, tensor_type)),
+    )
+    block = function.region().first_block()
+    (operand,) = block.raw.arguments
+    indices = tuple(block.const(0, ir.ScalarType.I64) for _ in shape)
+    result = block.tensor_extract(operand, indices)
+    block.return_(result, operand)
+
+    text = niro.format_mlir(niro.to_mlir(module.verify()))
+
+    assert "tensor.extract" in text
+    assert text.count("arith.index_cast") == len(shape)
+
+
 def test_lowers_tensor_weight_to_private_immutable_global() -> None:
     tensor_type = ir.TensorType(element_type=ir.ScalarType.F32, shape=(2, 2))
     data = bytes(range(16))

@@ -17,7 +17,7 @@ from ._core import (
     Value,
     tensor_shapes,
 )
-from .operators import OPERATORS
+from ._operators import OPERATORS
 
 
 def _literals(element_type: int) -> SearchStrategy[bool | int | float]:

@@ -15,6 +15,6 @@ from ._core import Value as Value
 from ._core import tensor_shape as tensor_shape
 from ._core import tensor_shapes as tensor_shapes
 from ._graph import models as models
-from .operators import OPERATORS as OPERATORS
-from .operators import broadcast_binary as broadcast_binary
-from .operators import unary as unary
+from ._operators import OPERATORS as OPERATORS
+from ._operators import broadcast_binary as broadcast_binary
+from ._operators import unary as unary
