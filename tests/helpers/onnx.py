@@ -175,6 +175,10 @@ def _assert_operation(ctx: _GraphContext, operation: ir.Op) -> None:
         for attribute in node.attribute
     }
     if isinstance(operation, ir.UnknownOp):
+        attributes = {
+            name: tuple(value) if isinstance(value, list) else value
+            for name, value in attributes.items()
+        }
         assert operation.name == f"{node.domain or 'onnx'}.{node.op_type}", (
             f"{location}: unexpected opaque operation name {operation.name!r}"
         )
