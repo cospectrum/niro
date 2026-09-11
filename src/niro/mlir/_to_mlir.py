@@ -12,7 +12,7 @@ from typing import assert_never, cast, overload
 from xdsl.dialect_interfaces.op_asm import OpAsmDialectInterface
 from xdsl.dialects import arith, builtin, cf, func, ml_program, scf, tensor
 from xdsl.dialects.linalg import ops as linalg
-from xdsl.ir import Attribute, Block, Operation, Region, SSAValue
+from xdsl.ir import Attribute, Block, Region, SSAValue
 
 from niro import ir
 from niro.ir import VerifiedModule
@@ -28,18 +28,10 @@ def to_mlir(niro_module: VerifiedModule) -> builtin.ModuleOp:
     directly to scf.if.
     Raise NotImplementedError for unknown operations.
     """
-    lowered_functions = [
-        _lower_function(function) for function in niro_module.functions
-    ]
+    functions = [_lower_function(function) for function in niro_module.functions]
     declared_globals = [_lower_global(global_) for global_ in niro_module.globals]
-    generated_globals = [
-        global_operation
-        for function_globals, _ in lowered_functions
-        for global_operation in function_globals
-    ]
-    functions = [function for _, function in lowered_functions]
     result = builtin.ModuleOp(
-        [*declared_globals, *generated_globals, *functions],
+        [*declared_globals, *functions],
         attributes=_lower_attributes(niro_module.attributes),
     )
     result.verify()
@@ -48,39 +40,36 @@ def to_mlir(niro_module: VerifiedModule) -> builtin.ModuleOp:
 
 def _lower_function(
     function: ir.Function,
-) -> tuple[tuple[Operation, ...], func.FuncOp]:
-    """Return generated constant globals and the lowered function.
+) -> func.FuncOp:
+    """Return the lowered function.
 
     Precreate CFG blocks and lower definitions before uses. External declarations
-    have no generated globals.
+    have no body.
     """
     inputs = [_lower_type(value_type) for value_type in function.type.inputs]
     outputs = [_lower_type(value_type) for value_type in function.type.outputs]
     if function.body is None:
         result = func.FuncOp.external(function.name, inputs, outputs)
         result.attributes.update(_lower_attributes(function.attributes))
-        return (), result
-    generated_globals: list[Operation] = []
-    body = _emit_function_body(function.body, generated_globals, function.name)
+        return result
+    body = _emit_function_body(function.body, function.name)
     result = func.FuncOp(function.name, (inputs, outputs), body)
     result.attributes.update(_lower_attributes(function.attributes))
-    return tuple(generated_globals), result
+    return result
 
 
 def _emit_operations(
     block: Block,
     values: ValueTable,
-    generated_globals: list[Operation],
     function_name: str,
     operations: list[ir.Op],
     blocks: Mapping[ir.Block, Block],
 ) -> None:
-    """Append lowered operations in order, updating values and generated globals."""
+    """Append lowered operations in order, updating value bindings."""
     for operation in operations:
         _emit_operation(
             block,
             values,
-            generated_globals,
             function_name,
             operation,
             blocks,
@@ -90,12 +79,11 @@ def _emit_operations(
 def _emit_operation(
     block: Block,
     values: ValueTable,
-    generated_globals: list[Operation],
     function_name: str,
     operation: ir.Op,
     blocks: Mapping[ir.Block, Block],
 ) -> None:
-    """Append an operation's lowering and record its results and any globals.
+    """Append an operation's lowering and record its results.
 
     Operands must already be bound; opaque operations cannot be lowered.
     """
@@ -104,7 +92,6 @@ def _emit_operation(
             _emit_const(
                 block,
                 values,
-                generated_globals,
                 function_name,
                 operation,
             )
@@ -188,13 +175,11 @@ def _emit_operation(
                 _emit_if_region(
                     operation.then_region,
                     values,
-                    generated_globals,
                     function_name,
                 ),
                 _emit_if_region(
                     operation.else_region,
                     values,
-                    generated_globals,
                     function_name,
                 ),
             )
@@ -210,14 +195,12 @@ def _emit_operation(
 
 def _emit_function_body(
     region: ir.Region,
-    generated_globals: list[Operation],
     function_name: str,
 ) -> Region:
     """Lower a function CFG in reverse postorder, preserving source block layout.
 
     Precreate blocks and arguments for forward edges and loop backedges. Emit
-    dominating definitions before their uses. Share the generated constant
-    globals with nested If lowering.
+    dominating definitions before their uses.
     """
     blocks = {
         source: Block(arg_types=[_lower_type(v.type) for v in source.arguments])
@@ -245,7 +228,6 @@ def _emit_function_body(
         _emit_operations(
             blocks[source],
             values,
-            generated_globals,
             function_name,
             source.operations,
             blocks,
@@ -256,7 +238,6 @@ def _emit_function_body(
 def _emit_if_region(
     region: ir.Region,
     visible_values: ValueTable,
-    generated_globals: list[Operation],
     function_name: str,
 ) -> Region:
     """Lower a verified If arm directly into one argument-free MLIR block.
@@ -269,7 +250,6 @@ def _emit_if_region(
     _emit_operations(
         block,
         dict(visible_values),
-        generated_globals,
         function_name,
         source.operations,
         {},
@@ -280,14 +260,13 @@ def _emit_if_region(
 def _emit_const(
     block: Block,
     values: ValueTable,
-    generated_globals: list[Operation],
     function_name: str,
     operation: ir.Const,
 ) -> None:
-    """Append a constant load and bind its result.
+    """Append an arithmetic constant and bind its result.
 
-    Tensor literals add a private resource-backed global; scalars use an
-    arithmetic constant. Literal types must already have been verified.
+    Tensor literals use dense resources; scalars use scalar attributes.
+    Literal types must already have been verified.
     """
     if isinstance(operation.result.type, ir.TensorType):
         data = cast(bytes, operation.literal)
@@ -297,18 +276,7 @@ def _emit_const(
         )
         symbol = f"__niro_{function_name}_{int(operation.result.id)}"
         value = _dense_resource(symbol, tensor_type, data)
-        generated_globals.append(
-            ml_program.GlobalOp(
-                builtin.StringAttr(symbol),
-                tensor_type,
-                None,
-                value,
-                builtin.StringAttr("private"),
-            )
-        )
-        lowered = ml_program.GlobalLoadConstantOp(
-            builtin.SymbolRefAttr(symbol), tensor_type
-        )
+        lowered = arith.ConstantOp(value)
     else:
         scalar_type = operation.result.type
         lowered = arith.ConstantOp(

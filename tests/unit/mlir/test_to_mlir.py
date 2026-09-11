@@ -50,7 +50,7 @@ def test_lowers_tensor_extract(shape: tuple[int, ...]) -> None:
     assert text.count("arith.index_cast") == len(shape)
 
 
-def test_lowers_tensor_weight_to_private_immutable_global() -> None:
+def test_lowers_tensor_weight_to_arithmetic_constant() -> None:
     tensor_type = ir.TensorType(element_type=ir.ScalarType.F32, shape=(2, 2))
     data = bytes(range(16))
     module = builder.ModuleBuilder()
@@ -65,16 +65,47 @@ def test_lowers_tensor_weight_to_private_immutable_global() -> None:
 
     lowered = niro.to_mlir(module.verify())
 
-    operations = list(lowered.body.block.ops)
-    global_ = operations[0]
-    assert isinstance(global_, ml_program.GlobalOp)
-    assert isinstance(global_.value, builtin.DenseResourceAttr)
+    assert all(isinstance(op, func.FuncOp) for op in lowered.body.block.ops)
+    constants = [op for op in lowered.walk() if isinstance(op, arith.ConstantOp)]
+    assert isinstance(constants[0].value, builtin.DenseResourceAttr)
     text = niro.format_mlir(lowered)
-    assert "ml_program.global private @__niro_model_1" in text
-    assert "dense_resource<__niro_model_1>" in text
+    assert "arith.constant dense_resource<__niro_model_1>" in text
     assert f'__niro_model_1: "0x{data.hex().upper()}"' in text
-    assert "ml_program.global_load_const @__niro_model_1" in text
+    assert "ml_program.global" not in text
     assert text.index("linalg.fill") < text.index("linalg.matmul")
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_preserves_constants_and_explicit_globals(nested: bool) -> None:
+    tensor_type = ir.TensorType(ir.ScalarType.I32, (2,))
+    data = bytes(range(8))
+    module = builder.ModuleBuilder()
+    module.raw.globals.append(ir.Global("weight", tensor_type, data))
+    block = (
+        module.function(
+            name="constants",
+            type=ir.FunctionType((), (tensor_type, tensor_type)),
+        )
+        .region()
+        .first_block()
+    )
+    global_value = block.get_global("weight")
+    if nested:
+        conditional = block.if_(block.bool(True), (tensor_type,))
+        for region in (conditional.then_region, conditional.else_region):
+            arm = region.block()
+            arm.yield_(arm.tensor(data, tensor_type))
+        constant = conditional.raw.results[0]
+    else:
+        constant = block.tensor(data, tensor_type)
+    block.return_(constant, global_value)
+
+    lowered = niro.to_mlir(module.verify())
+    ops = list(lowered.walk())
+    assert sum(isinstance(op, ml_program.GlobalOp) for op in ops) == 1
+    assert sum(isinstance(op, ml_program.GlobalLoadConstantOp) for op in ops) == 1
+    assert sum(isinstance(op, arith.ConstantOp) for op in ops) == (3 if nested else 1)
+    parse_mlir(niro.format_mlir(lowered)).verify()
 
 
 def test_lowers_private_helper_and_call() -> None:
