@@ -4,16 +4,16 @@ from typing import Literal
 import onnx
 import pytest
 
-from . import onnx_models, support
+from . import helpers, onnx_models
 
 _ONNX_MODEL_CASES = onnx_models.onnx_model_cases()
 
 
 @pytest.fixture(scope="session")
-def installed_cli(tmp_path_factory: pytest.TempPathFactory) -> support.InstalledCli:
+def installed_cli(tmp_path_factory: pytest.TempPathFactory) -> helpers.InstalledCli:
     project_root = Path(__file__).parents[3]
     root = tmp_path_factory.mktemp("installed-cli")
-    return support.install_cli(project_root, root)
+    return helpers.install_cli(project_root, root)
 
 
 @pytest.fixture(
